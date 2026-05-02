@@ -2,6 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>POLAR Y PINGUI</title>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
 <style>
@@ -46,6 +47,22 @@
     image-rendering: crisp-edges;
     border: 4px solid #000;
     cursor: pointer;
+    /* en móvil: el canvas absorbe los toques sin que el navegador
+       haga zoom, scroll ni doble-tap-zoom por accidente */
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    /* escala el canvas para que llene la pantalla manteniendo proporción */
+    max-width: 100vw;
+    max-height: 100vh;
+    height: auto;
+  }
+
+  /* En pantallas pequeñas el marco arcade ocupa todo */
+  @media (max-width: 850px) {
+    .arcade { padding: 6px; border-width: 4px; box-shadow: none; }
+    .titulo-rom { display: none; }
   }
 
   .titulo-rom {
@@ -1979,6 +1996,9 @@ function dibujarJuego() {
       texto("¡VUELVE CON PINGUI!", ANCHO / 2, ALTO - 36, COLORES.rojo, 16, COLORES.blanco, "center");
     }
   }
+
+  // D-pad táctil para móvil (solo se dibuja en dispositivos con touch)
+  dibujarDpad();
 }
 
 // -------------------- VICTORIA --------------------
@@ -2173,14 +2193,17 @@ document.addEventListener("keyup", (e) => {
   teclas[e.key] = false;
 });
 
-lienzo.addEventListener("click", (e) => {
+// Convierte un evento mouse/touch a coordenadas del canvas (800x500)
+function obtenerCoordsCanvas(clientX, clientY) {
   const rect = lienzo.getBoundingClientRect();
-  const escalaX = lienzo.width / rect.width;
-  const escalaY = lienzo.height / rect.height;
-  const mx = (e.clientX - rect.left) * escalaX;
-  const my = (e.clientY - rect.top) * escalaY;
+  return {
+    x: (clientX - rect.left) * (lienzo.width / rect.width),
+    y: (clientY - rect.top) * (lienzo.height / rect.height)
+  };
+}
 
-  // Iniciar audio en cualquier clic
+// Procesa un toque/click en (mx, my) según el estado del juego
+function manejarClickCanvas(mx, my) {
   iniciarAudio();
   if (audioCtx.state === "suspended") audioCtx.resume();
 
@@ -2191,7 +2214,6 @@ lienzo.addEventListener("click", (e) => {
   }
 
   if (gameState === "intro") {
-    // botón saltar
     const bx = ANCHO - 150, by = ALTO - 56, bw = 130, bh = 40;
     if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh) {
       detenerMusicaIntro();
@@ -2209,7 +2231,6 @@ lienzo.addEventListener("click", (e) => {
   }
 
   if (gameState === "matematicas") {
-    // Buscar cuál de las 4 opciones se hizo clic (coords iguales a las del dibujo)
     const bx = 80, by = 50;
     for (let i = 0; i < 4; i++) {
       const col = i % 2;
@@ -2226,13 +2247,12 @@ lienzo.addEventListener("click", (e) => {
   }
 
   if (gameState === "nivelCompleto") {
-    // botón siguiente nivel (coords iguales a las del dibujo)
     const cx = ANCHO / 2;
     const ch = 320;
     const cyT = (ALTO - ch) / 2;
     const bx = cx - 150, by = cyT + ch - 70, bw = 300, bh = 50;
     if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh) {
-      cambiarA("jugando"); // avanza al siguiente nivel
+      cambiarA("jugando");
     }
     return;
   }
@@ -2252,7 +2272,156 @@ lienzo.addEventListener("click", (e) => {
     }
     return;
   }
+}
+
+lienzo.addEventListener("click", (e) => {
+  const { x, y } = obtenerCoordsCanvas(e.clientX, e.clientY);
+  manejarClickCanvas(x, y);
 });
+
+// =================================================================
+// CONTROLES TÁCTILES (D-PAD para móvil)
+// =================================================================
+
+// 4 botones en cruz, abajo a la izquierda del canvas
+const BOTONES_TOUCH = [
+  { tecla: "ArrowUp",    x:  60, y: 290, w: 70, h: 70, flecha: "arriba"  },
+  { tecla: "ArrowLeft",  x:   0, y: 360, w: 70, h: 70, flecha: "izquierda" },
+  { tecla: "ArrowRight", x: 120, y: 360, w: 70, h: 70, flecha: "derecha" },
+  { tecla: "ArrowDown",  x:  60, y: 430, w: 70, h: 70, flecha: "abajo" }
+];
+
+// Detección de dispositivo táctil
+const ES_TOUCH = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+
+// Mapa de toques activos: id del touch -> tecla que está manteniendo
+// (o {x,y} si no era un d-pad y se va a tratar como click al soltar)
+const touchActivos = new Map();
+
+function botonTouchEnPos(x, y) {
+  if (gameState !== "jugando") return null;
+  for (const b of BOTONES_TOUCH) {
+    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return b;
+  }
+  return null;
+}
+
+// Dibuja una flecha pixelada centrada
+function dibujarFlecha(cx, cy, dir, color) {
+  ctx.fillStyle = color;
+  // se construye la flecha con rectángulos para mantener look pixel art
+  if (dir === "arriba") {
+    ctx.fillRect(cx - 4, cy - 16, 8, 4);
+    ctx.fillRect(cx - 8, cy - 12, 16, 4);
+    ctx.fillRect(cx - 12, cy - 8, 24, 4);
+    ctx.fillRect(cx - 4, cy - 4, 8, 16);
+  } else if (dir === "abajo") {
+    ctx.fillRect(cx - 4, cy - 16, 8, 16);
+    ctx.fillRect(cx - 12, cy + 0, 24, 4);
+    ctx.fillRect(cx - 8, cy + 4, 16, 4);
+    ctx.fillRect(cx - 4, cy + 8, 8, 4);
+  } else if (dir === "izquierda") {
+    ctx.fillRect(cx - 16, cy - 4, 4, 8);
+    ctx.fillRect(cx - 12, cy - 8, 4, 16);
+    ctx.fillRect(cx - 8, cy - 12, 4, 24);
+    ctx.fillRect(cx - 4, cy - 4, 16, 8);
+  } else if (dir === "derecha") {
+    ctx.fillRect(cx + 12, cy - 4, 4, 8);
+    ctx.fillRect(cx + 8, cy - 8, 4, 16);
+    ctx.fillRect(cx + 4, cy - 12, 4, 24);
+    ctx.fillRect(cx - 12, cy - 4, 16, 8);
+  }
+}
+
+function dibujarDpad() {
+  // Sólo durante el juego, y sólo en dispositivos táctiles
+  if (!ES_TOUCH || gameState !== "jugando") return;
+  for (const b of BOTONES_TOUCH) {
+    const presionado = !!teclas[b.tecla];
+    // fondo
+    ctx.fillStyle = presionado ? "rgba(255,232,84,0.78)" : "rgba(0,0,0,0.5)";
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    // borde blanco
+    ctx.fillStyle = "rgba(255,255,255,0.8)";
+    ctx.fillRect(b.x, b.y, b.w, 4);
+    ctx.fillRect(b.x, b.y + b.h - 4, b.w, 4);
+    ctx.fillRect(b.x, b.y, 4, b.h);
+    ctx.fillRect(b.x + b.w - 4, b.y, 4, b.h);
+    // flecha
+    dibujarFlecha(b.x + b.w / 2, b.y + b.h / 2, b.flecha,
+      presionado ? COLORES.negro : COLORES.blanco);
+  }
+}
+
+// Soltar todas las teclas activadas por touch (al cambiar de estado, etc.)
+function soltarTeclasTouch() {
+  for (const tracked of touchActivos.values()) {
+    if (typeof tracked === "string") teclas[tracked] = false;
+  }
+  touchActivos.clear();
+}
+
+lienzo.addEventListener("touchstart", (e) => {
+  e.preventDefault();
+  iniciarAudio();
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+  for (const t of Array.from(e.changedTouches)) {
+    const pos = obtenerCoordsCanvas(t.clientX, t.clientY);
+    const b = botonTouchEnPos(pos.x, pos.y);
+    if (b) {
+      teclas[b.tecla] = true;
+      touchActivos.set(t.identifier, b.tecla);
+    } else {
+      // toque que NO está sobre el d-pad: lo trataremos como click al soltar
+      touchActivos.set(t.identifier, { x: pos.x, y: pos.y, esClick: true });
+    }
+  }
+}, { passive: false });
+
+lienzo.addEventListener("touchmove", (e) => {
+  e.preventDefault();
+  for (const t of Array.from(e.changedTouches)) {
+    const pos = obtenerCoordsCanvas(t.clientX, t.clientY);
+    const tracked = touchActivos.get(t.identifier);
+    const b = botonTouchEnPos(pos.x, pos.y);
+    if (typeof tracked === "string") {
+      if (!b) {
+        teclas[tracked] = false;
+        touchActivos.delete(t.identifier);
+      } else if (b.tecla !== tracked) {
+        teclas[tracked] = false;
+        teclas[b.tecla] = true;
+        touchActivos.set(t.identifier, b.tecla);
+      }
+    } else if (b) {
+      // arrastró desde fuera del d-pad hacia un botón
+      teclas[b.tecla] = true;
+      touchActivos.set(t.identifier, b.tecla);
+    }
+  }
+}, { passive: false });
+
+lienzo.addEventListener("touchend", (e) => {
+  e.preventDefault();
+  for (const t of Array.from(e.changedTouches)) {
+    const tracked = touchActivos.get(t.identifier);
+    if (typeof tracked === "string") {
+      teclas[tracked] = false;
+    } else if (tracked && tracked.esClick) {
+      manejarClickCanvas(tracked.x, tracked.y);
+    }
+    touchActivos.delete(t.identifier);
+  }
+}, { passive: false });
+
+lienzo.addEventListener("touchcancel", (e) => {
+  e.preventDefault();
+  for (const t of Array.from(e.changedTouches)) {
+    const tracked = touchActivos.get(t.identifier);
+    if (typeof tracked === "string") teclas[tracked] = false;
+    touchActivos.delete(t.identifier);
+  }
+}, { passive: false });
 
 // Inicializa copos para que ya estén listos al cambiar de pantalla
 inicializarCopos(60);

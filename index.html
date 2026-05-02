@@ -1,0 +1,2259 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>POLAR Y PINGUI</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  /* =========================================================
+     ESTILOS GENERALES - APARIENCIA RETRO ARCADE
+     ========================================================= */
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #0a0a14; /* fondo oscuro tipo sala arcade */
+    height: 100%;
+    overflow: hidden;
+    font-family: 'Press Start 2P', 'Courier New', monospace;
+    color: #fff;
+  }
+
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+  }
+
+  /* Marco del monitor arcade */
+  .arcade {
+    padding: 16px;
+    background: #1a1a2e;
+    border: 8px solid #000;
+    box-shadow:
+      0 0 0 4px #444,
+      0 0 0 12px #000,
+      0 0 60px rgba(80, 200, 255, 0.25);
+    border-radius: 6px;
+    image-rendering: pixelated;
+  }
+
+  canvas {
+    display: block;
+    background: #000;
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+    border: 4px solid #000;
+    cursor: pointer;
+  }
+
+  .titulo-rom {
+    text-align: center;
+    color: #66ccff;
+    font-size: 10px;
+    margin-top: 10px;
+    letter-spacing: 2px;
+    text-shadow: 2px 2px 0 #000;
+  }
+</style>
+</head>
+<body>
+
+<div class="arcade">
+  <canvas id="lienzo" width="800" height="500"></canvas>
+  <div class="titulo-rom">★ POLAR Y PINGUI - ROM CARTRIDGE 1986 ★</div>
+</div>
+
+<script>
+/* =================================================================
+   POLAR Y PINGUI - JUEGO RETRO PIXEL ART
+   Hecho con HTML5 Canvas y Web Audio API.
+   Todo el dibujo es con rectángulos (píxeles grandes).
+   La música y sonidos se generan con osciladores tipo "square".
+   ================================================================= */
+
+// -------------------- CONFIGURACIÓN BÁSICA --------------------
+const lienzo = document.getElementById("lienzo");
+const ctx = lienzo.getContext("2d");
+ctx.imageSmoothingEnabled = false; // píxeles nítidos al escalar
+
+const ANCHO = lienzo.width;   // 800
+const ALTO  = lienzo.height;  // 500
+
+// Tamaño de cada "píxel grande" para el pixel art
+const PX = 4;
+
+// Paleta limitada estilo NES (8-16 colores)
+const COLORES = {
+  negro:        "#000000",
+  blanco:       "#ffffff",
+  hueso:        "#f8f0d8",
+  grisOscuro:   "#3a3a3a",
+  azulOscuro:   "#1a3a6e",
+  cian:         "#66ccff",
+  azulHielo:    "#a8d8f8",
+  azulClaro:    "#cdeefd",
+  naranja:      "#f08020",
+  amarillo:     "#fbe854",
+  rojo:         "#e02828",
+  marron:       "#8a4a1c",
+  marronClaro:  "#b27040",
+  marronOscuro: "#5a2e0e",
+  morado:       "#5c3a7c",
+  moradoClaro:  "#8060a0",
+  rojoOscuro:   "#a02018",
+  salmon:       "#ff8060",
+  verde:        "#208830",
+  verdeOscuro:  "#0c5018",
+  rosa:         "#ffb0a0"
+};
+
+// Estado global del juego: "espera" | "intro" | "titulo" | "jugando" | "victoria"
+let gameState = "espera";
+
+// -------------------- AUDIO (Web Audio API) --------------------
+let audioCtx = null;
+let musicaIntroOn = false;
+let nodosMusica = []; // para detener la música
+
+// Inicializa el AudioContext (requiere gesto del usuario)
+function iniciarAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+}
+
+// Reproduce un "beep" cuadrado simple (notas MIDI)
+function beep(freq, duracion, tipo = "square", volumen = 0.15, retraso = 0) {
+  if (!audioCtx) return;
+  const t0 = audioCtx.currentTime + retraso;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = tipo;
+  osc.frequency.setValueAtTime(freq, t0);
+  gain.gain.setValueAtTime(0, t0);
+  gain.gain.linearRampToValueAtTime(volumen, t0 + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duracion);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(t0);
+  osc.stop(t0 + duracion + 0.05);
+}
+
+// Frecuencias de notas (Hz)
+const N = {
+  C4: 261.63, D4: 293.66, E4: 329.63, F4: 349.23, G4: 392.00, A4: 440.00, B4: 493.88,
+  C5: 523.25, D5: 587.33, E5: 659.25, F5: 698.46, G5: 783.99, A5: 880.00, B5: 987.77,
+  C6:1046.50
+};
+
+// Música de la intro (chiptune heroico/alegre, escala mayor C)
+// Cada elemento: [frecuencia, duración_segundos]
+const MELODIA_INTRO = [
+  [N.C5, 0.18], [N.E5, 0.18], [N.G5, 0.18], [N.C6, 0.36],
+  [N.B5, 0.18], [N.G5, 0.18], [N.A5, 0.36],
+  [N.F5, 0.18], [N.A5, 0.18], [N.G5, 0.36], [N.E5, 0.18],
+  [N.D5, 0.18], [N.E5, 0.18], [N.G5, 0.18], [N.C5, 0.36],
+  [N.E5, 0.18], [N.G5, 0.18], [N.A5, 0.18], [N.B5, 0.36],
+  [N.C6, 0.18], [N.B5, 0.18], [N.G5, 0.18], [N.E5, 0.36],
+  [N.D5, 0.18], [N.F5, 0.18], [N.E5, 0.18], [N.C5, 0.54]
+];
+const BAJO_INTRO = [
+  [N.C4, 0.36], [N.G4, 0.36],
+  [N.C4, 0.36], [N.G4, 0.36],
+  [N.F4, 0.36], [N.C4, 0.36],
+  [N.G4, 0.36], [N.C4, 0.36],
+  [N.C4, 0.36], [N.G4, 0.36],
+  [N.E4, 0.36], [N.C4, 0.36],
+  [N.G4, 0.36], [N.C4, 0.54]
+];
+
+let timerMusica = null;
+
+// Reproduce la melodía completa una vez y devuelve la duración total
+function reproducirMelodia(melodia, tipo, volumen, offset = 0) {
+  let t = 0;
+  for (const [f, d] of melodia) {
+    if (f > 0) beep(f, d * 0.95, tipo, volumen, offset + t);
+    t += d;
+  }
+  return t;
+}
+
+// Loop de la música de intro: la repite hasta que se detenga
+function arrancarMusicaIntro() {
+  if (!audioCtx || musicaIntroOn) return;
+  musicaIntroOn = true;
+  const tocar = () => {
+    if (!musicaIntroOn) return;
+    const dur1 = reproducirMelodia(MELODIA_INTRO, "square", 0.10, 0);
+    reproducirMelodia(BAJO_INTRO, "triangle", 0.18, 0);
+    timerMusica = setTimeout(tocar, dur1 * 1000);
+  };
+  tocar();
+}
+
+function detenerMusicaIntro() {
+  musicaIntroOn = false;
+  if (timerMusica) { clearTimeout(timerMusica); timerMusica = null; }
+}
+
+// Sonido "ding" al recoger pescado
+function sonidoDing() {
+  if (!audioCtx) return;
+  beep(1318.51, 0.07, "square", 0.18, 0);     // E6
+  beep(N.A5,    0.10, "square", 0.18, 0.07);
+}
+
+// Sonido al ponerse un springlock (electromecánico/transformación)
+function sonidoDisfraz() {
+  if (!audioCtx) return;
+  beep(N.G4, 0.08, "square", 0.16, 0);
+  beep(N.C5, 0.08, "square", 0.16, 0.06);
+  beep(N.E5, 0.08, "square", 0.16, 0.12);
+  beep(N.G5, 0.20, "square", 0.18, 0.18);
+}
+
+// Sonido de respuesta correcta (acordes ascendentes)
+function sonidoCorrecto() {
+  if (!audioCtx) return;
+  beep(N.C5, 0.10, "square", 0.18, 0);
+  beep(N.E5, 0.10, "square", 0.18, 0.10);
+  beep(N.G5, 0.10, "square", 0.18, 0.20);
+  beep(N.C6, 0.25, "square", 0.20, 0.30);
+}
+
+// Sonido de respuesta incorrecta (descendente, "buzzer")
+function sonidoIncorrecto() {
+  if (!audioCtx) return;
+  beep(N.E4, 0.18, "sawtooth", 0.18, 0);
+  beep(N.D4, 0.18, "sawtooth", 0.18, 0.18);
+  beep(N.C4, 0.30, "sawtooth", 0.20, 0.36);
+}
+
+// Sonido de golpe (al chocar con un enemigo)
+function sonidoGolpe() {
+  if (!audioCtx) return;
+  beep(160, 0.10, "sawtooth", 0.22, 0);
+  beep(80,  0.18, "square",   0.20, 0.05);
+}
+
+// Jingle corto de nivel completado
+function sonidoNivelCompleto() {
+  if (!audioCtx) return;
+  const f = [
+    [N.E5, 0.10], [N.G5, 0.10], [N.C6, 0.10], [N.E5, 0.10],
+    [N.G5, 0.10], [N.C6, 0.30]
+  ];
+  reproducirMelodia(f, "square", 0.18, 0);
+}
+
+// Fanfarria de victoria
+function sonidoVictoria() {
+  if (!audioCtx) return;
+  const f = [
+    [N.C5, 0.12], [N.E5, 0.12], [N.G5, 0.12], [N.C6, 0.30],
+    [N.G5, 0.12], [N.C6, 0.40]
+  ];
+  reproducirMelodia(f, "square", 0.18, 0);
+  reproducirMelodia([[N.C4,0.24],[N.G4,0.24],[N.C5,0.6]], "triangle", 0.20, 0);
+}
+
+// -------------------- HELPERS DE PIXEL ART --------------------
+
+// Dibuja un "píxel grande" (rectángulo de PX*PX) en (x,y) en coordenadas de píxel art
+function pixel(x, y, color, escala = PX) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x * escala, y * escala, escala, escala);
+}
+
+// Dibuja un sprite (matriz de strings) en coordenadas (x,y) en píxeles del canvas.
+// Cada caracter del string es un píxel grande de tamaño "escala".
+// Se usa el mapa "leyenda" para traducir caracter -> color (' ' = transparente).
+function dibujarSprite(matriz, x, y, leyenda, escala = PX) {
+  for (let fila = 0; fila < matriz.length; fila++) {
+    const linea = matriz[fila];
+    for (let col = 0; col < linea.length; col++) {
+      const c = linea[col];
+      if (c === ' ' || c === '.') continue;
+      const color = leyenda[c];
+      if (!color) continue;
+      ctx.fillStyle = color;
+      ctx.fillRect(x + col * escala, y + fila * escala, escala, escala);
+    }
+  }
+}
+
+// Dibuja un sprite con un BORDE NEGRO grueso alrededor de su silueta.
+// Truco: dibuja la silueta cuatro veces (1 píxel desplazada arriba, abajo,
+// izquierda y derecha) en negro, y luego dibuja el sprite real encima. Así
+// el borde solo aparece donde el sprite limita con transparencia.
+function dibujarSpriteConBorde(matriz, x, y, leyenda, escala = PX, colorBorde = COLORES.negro) {
+  const desplazamientos = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+  for (const [dx, dy] of desplazamientos) {
+    const ox = x + dx * escala;
+    const oy = y + dy * escala;
+    for (let fila = 0; fila < matriz.length; fila++) {
+      const linea = matriz[fila];
+      for (let col = 0; col < linea.length; col++) {
+        const c = linea[col];
+        if (c === ' ' || c === '.') continue;
+        ctx.fillStyle = colorBorde;
+        ctx.fillRect(ox + col * escala, oy + fila * escala, escala, escala);
+      }
+    }
+  }
+  dibujarSprite(matriz, x, y, leyenda, escala);
+}
+
+// Texto pixelado en mayúsculas
+function texto(str, x, y, color = COLORES.blanco, tam = 16, sombra = null, alinear = "left") {
+  ctx.font = `${tam}px 'Press Start 2P', 'Courier New', monospace`;
+  ctx.textAlign = alinear;
+  ctx.textBaseline = "top";
+  if (sombra) {
+    ctx.fillStyle = sombra;
+    ctx.fillText(str, x + 3, y + 3);
+  }
+  ctx.fillStyle = color;
+  ctx.fillText(str, x, y);
+}
+
+// -------------------- SPRITES (PIXEL ART) --------------------
+
+/* Polar - oso polar realista (frente, con sombras y hocico)
+   B = blanco, N = negro, R = rosa (mejillas/orejas), H = hueso (hocico crema),
+   K = negro nariz, S = azul claro (sombra fría sobre blanco) */
+const SPRITE_POLAR = [
+  "  BBBBB    BBBBB  ",
+  " BBRRBBB  BBBRRBB ",
+  " BBRRBBB  BBBRRBB ",
+  " BBBBBBBBBBBBBBBB ",
+  "BBBBBBBBBBBBBBBBBB",
+  "BBSBBNNBBBBNNBBSBB",
+  "BBBBBNNBBBBNNBBBBB",
+  "BBBBBBBBBBBBBBBBBB",
+  "BBBBBBHHHHHHBBBBBB",
+  "BBBBBBHHKKHHBBBBBB",
+  "BBBBBBHHHHHHBBBBBB",
+  "BBBBBBBBNNBBBBBBBB",
+  " BBBBBBBBBBBBBBBB ",
+  " BBSBBBBBBBBBBSBB ",
+  "BBB BBBBBBBBBB BBB",
+  "NNN  NNNNNNN   NNN"
+];
+const LEY_POLAR = {
+  B: COLORES.blanco,
+  N: COLORES.negro,
+  R: COLORES.rosa,
+  H: COLORES.hueso,
+  K: COLORES.negro,
+  S: COLORES.azulClaro
+};
+
+// Polar caminando: piernas alternadas y mejillas con sombra suave
+const SPRITE_POLAR_PASO = [
+  "  BBBBB    BBBBB  ",
+  " BBRRBBB  BBBRRBB ",
+  " BBRRBBB  BBBRRBB ",
+  " BBBBBBBBBBBBBBBB ",
+  "BBBBBBBBBBBBBBBBBB",
+  "BBSBBNNBBBBNNBBSBB",
+  "BBBBBNNBBBBNNBBBBB",
+  "BBBBBBBBBBBBBBBBBB",
+  "BBBBBBHHHHHHBBBBBB",
+  "BBBBBBHHKKHHBBBBBB",
+  "BBBBBBHHHHHHBBBBBB",
+  "BBBBBBBBNNBBBBBBBB",
+  " BBBBBBBBBBBBBBBB ",
+  " BBSBBBBBBBBBBSBB ",
+  "BBBB BBBBBBBB BBBB",
+  "NNNN  NNNNNN   NNN"
+];
+
+/* Pingui - pingüino con panza blanca y pico naranja
+   leyenda: N = negro, B = blanco, O = naranja, R = rojo (mejillas) */
+const SPRITE_PINGUI = [
+  "    NNNNNNNN    ",
+  "   NNNNNNNNNN   ",
+  "  NNNBBNNBBNN   ",
+  "  NNBNNNNNNBN   ",
+  "  NNNNNOONNNN   ",
+  "  NNNNNOONNNN   ",
+  "  NNBBBBBBBBNN  ",
+  " NNNBBBBBBBBNNN ",
+  " NNBBBBBBBBBBNN ",
+  "NNBBBBBBBBBBBBNN",
+  "NNBBBBBBBBBBBBNN",
+  "NNBBBBBBBBBBBBNN",
+  "NNNBBBBBBBBBBNNN",
+  " NNNNBBBBBBNNNN ",
+  "  NNNNNNNNNNNN  ",
+  " OOO  NNNN  OOO "
+];
+const LEY_PINGUI = { N: COLORES.negro, B: COLORES.blanco, O: COLORES.naranja, R: COLORES.rojo };
+
+/* Pescado pixelado */
+const SPRITE_PESCADO = [
+  "    OOOO  OO ",
+  "  OOaaaaOOOOO",
+  " OaaaaaaaaaO ",
+  "OaaNNaaaaaaO ",
+  "OaaaaaaaaaO  ",
+  " OaaaaaaaO   ",
+  "  OOOOOOO    "
+];
+const LEY_PESCADO = { O: COLORES.naranja, a: COLORES.amarillo, N: COLORES.negro };
+
+/* Iceberg pixelado */
+const SPRITE_ICEBERG = [
+  "      WWWW       ",
+  "     WWWWWW      ",
+  "    WWWWWWWW     ",
+  "   WWaWWWWaWW    ",
+  "  WaaWWWWaaaWW   ",
+  " WaaaaWWaaaaaWW  ",
+  "WaaaaaaaaaaaaaWW ",
+  "WaaaaaaaaaaaaaaW ",
+  "WaaaabbaaaaaaabW ",
+  "WaaaabbaaaaaabbW ",
+  "WaabbaaaaaaabbbW ",
+  "WbbbbbbbbbbbbbbW "
+];
+const LEY_ICEBERG = { W: COLORES.blanco, a: COLORES.azulClaro, b: COLORES.azulHielo };
+
+/* Refrigerador */
+const SPRITE_REFRI_CERRADO = [
+  "GGGGGGGGGGGG",
+  "GBBBBBBBBBBG",
+  "GBWWWWWWWWBG",
+  "GBWWWWWWWWBG",
+  "GBWWWWWWnWBG",
+  "GBWWWWWWWWBG",
+  "GBBBBBBBBBBG",
+  "GBBBBBBBBBBG",
+  "GBWWWWWWWWBG",
+  "GBWWWWWWWWBG",
+  "GBWWWWWWnWBG",
+  "GBWWWWWWWWBG",
+  "GBWWWWWWWWBG",
+  "GBWWWWWWWWBG",
+  "GBBBBBBBBBBG",
+  "GGGGGGGGGGGG"
+];
+const SPRITE_REFRI_ABIERTO = [
+  "GGGGGGGGGGGGGGGGG",
+  "GBBBBBBBBBBnnnnnG",
+  "GBWWWWWWWWBnXXXnG",
+  "GBWWWWWWWWBnXXXnG",
+  "GBWWWWWWnWBnXXXnG",
+  "GBWWWWWWWWBnXXXnG",
+  "GBBBBBBBBBBnXXXnG",
+  "GBBBBBBBBBBnXXXnG",
+  "GBWWWWWWWWBnXXXnG",
+  "GBWWWWWWWWBnXXXnG",
+  "GBWWWWWWnWBnXXXnG",
+  "GBWWWWWWWWBnXXXnG",
+  "GBWWWWWWWWBnXXXnG",
+  "GBWWWWWWWWBnXXXnG",
+  "GBBBBBBBBBBnnnnnG",
+  "GGGGGGGGGGGGGGGGG"
+];
+const LEY_REFRI = {
+  G: COLORES.grisOscuro,
+  B: COLORES.blanco,
+  W: COLORES.azulClaro,
+  n: COLORES.negro,
+  X: COLORES.azulOscuro
+};
+
+/* ===========================================================
+   ANIMATRÓNICOS DE FNAF - sprites 18x18 con sombras y detalle
+   =========================================================== */
+
+/* FREDDY FAZBEAR - oso marrón, sombrero de copa alto, moño negro,
+   ojos con pupila blanca, sonrisa con dientes y dos botones.
+   M=marrón cuerpo, m=marrón claro (hocico), d=marrón oscuro (sombra),
+   N=negro, W=blanco (pupilas), K=negro nariz */
+const SPRITE_ENEMIGO = [
+  "      NNNNNN      ",
+  "      NNNNNN      ",
+  "      NNNNNN      ",
+  "      NNNNNN      ",
+  "   NNNNNNNNNNNN   ",
+  " MM MMMMMMMMMM MM ",
+  " MmMMMMMMMMMMMMmM ",
+  " MMMMMMMMMMMMMMMM ",
+  " MMNWMmmmmmmMWNMM ",
+  " MMNNMmmmmmmMNNMM ",
+  " MMMmmmmKKmmmmMMM ",
+  " MMMmmmmmmmmmmMMM ",
+  " MMMmmNNNNNNmmMMM ",
+  " MMMMmmmmmmmmMMMM ",
+  " NNNNNNNNNNNNNNNN ",
+  " MmmmmNmmmmNmmmmM ",
+  "MMmmmmmmmmmmmmmmMM",
+  " MMMMMMMMMMMMMMMM "
+];
+const LEY_ENEMIGO = {
+  N: COLORES.negro,
+  M: COLORES.marron,
+  m: COLORES.marronClaro,
+  d: COLORES.marronOscuro,
+  K: COLORES.negro,
+  W: COLORES.blanco
+};
+
+/* BONNIE - conejo morado con orejas largas, pupilas rojas (FNAF),
+   nariz negra, dientes blancos, moño rojo grande.
+   P=morado, p=morado claro (panza), r=rosa (oreja interna),
+   N=negro, W=blanco (dientes), R=rojo (ojos+moño), K=nariz */
+const SPRITE_BONNIE = [
+  "    PP      PP    ",
+  "   PPP      PPP   ",
+  "   PrP      PrP   ",
+  "   PrP      PrP   ",
+  "   PPP      PPP   ",
+  "  PPPPPPPPPPPPPP  ",
+  " PPPPPPPPPPPPPPPP ",
+  "PPPPPPPPPPPPPPPPPP",
+  "PPNRPPPppppPPPRNPP",
+  "PPNNPPPppppPPPNNPP",
+  "PPPPppppKKppppPPPP",
+  "PPPppppWWWWppppPPP",
+  "PPPppppppppppppPPP",
+  " PPPPPPPPPPPPPPPP ",
+  " RRRRRRRRRRRRRRRR ",
+  " PpppppppppppppP  ",
+  "PPpppppppppppppPP ",
+  " PPPPPPPPPPPPPPPP "
+];
+const LEY_BONNIE = {
+  P: COLORES.morado,
+  p: COLORES.moradoClaro,
+  r: COLORES.rosa,
+  N: COLORES.negro,
+  W: COLORES.blanco,
+  R: COLORES.rojo,
+  K: COLORES.negro
+};
+
+/* CHICA - gallina amarilla con tres plumas, pico naranja grande,
+   babero blanco "LET'S EAT", patitas naranjas.
+   Y=amarillo, O=naranja (pico/patas), W=blanco babero/dientes,
+   N=negro (ojos+letras del babero) */
+const SPRITE_CHICA = [
+  "     Y  Y  Y      ",
+  "    YY YY YY      ",
+  "   YYYYYYYYYYY    ",
+  "  YYYYYYYYYYYYYY  ",
+  " YYYYYYYYYYYYYYYY ",
+  "YYYYYYYYYYYYYYYYYY",
+  "YYNNYYYYYYYYYYNNYY",
+  "YYNWYYYYYYYYYYWNYY",
+  "YYYYOOOOOOOOOOYYYY",
+  "YYYYYOOOOOOOOYYYYY",
+  "YYYYYYWWWWWWYYYYYY",
+  "  YYYYYYYYYYYYYY  ",
+  "   WWWWWWWWWWWW   ",
+  "   WWWNWWWWNWWW   ",
+  "   WWWWWWWWWWWW   ",
+  " YYYYYYYYYYYYYYYY ",
+  "YYYYYYYYYYYYYYYYYY",
+  "   OOO      OOO   "
+];
+const LEY_CHICA = {
+  Y: COLORES.amarillo,
+  O: COLORES.naranja,
+  N: COLORES.negro,
+  W: COLORES.blanco
+};
+
+/* FOXY - zorro pirata con parche, dientes afilados y gancho.
+   F=rojo, f=salmón (orejas internas), Y=amarillo (ojo bueno),
+   N=negro (parche, garras, gancho, dientes), W=blanco (hocico/panza),
+   K=negro nariz */
+const SPRITE_FOXY = [
+  "  FF          FF  ",
+  "  FFF        FFF  ",
+  "  FfF        FfF  ",
+  "  FFFF      FFFF  ",
+  "  FFFFFFFFFFFFFF  ",
+  " FFFFFFFFFFFFFFFF ",
+  "FFYYFFFFFFFFNNNNFF",
+  "FFYYFFWWWWWWNNNNFF",
+  "FFFFWWWWWWWWNNFFFF",
+  "FFFFWWWWKKWWWWFFFF",
+  "FFFWNWNWNWNWNWNFFF",
+  "FFFWWWWWWWWWWWWFFF",
+  " FFFFFFFFFFFFFFFF ",
+  " FWWWWWWWWWWWWWWF ",
+  "FFWWWWWWWWWWWWWWFF",
+  "FFFWWWWWWWWWWWWFFF",
+  " FF            FF ",
+  " NN            NN "
+];
+const LEY_FOXY = {
+  F: COLORES.rojo,
+  f: COLORES.salmon,
+  Y: COLORES.amarillo,
+  N: COLORES.negro,
+  W: COLORES.blanco,
+  K: COLORES.negro
+};
+
+/* SPRINGLOCK - traje amarillo estilo Spring Bonnie tirado en el suelo
+   Polar puede ponérselo para que los animatrónicos no lo ataquen.
+   Y=amarillo cuerpo, g=oro oscuro (sombra), y=tono medio,
+   N=negro ojos/pies, K=nariz negra */
+const SPRITE_SPRINGLOCK = [
+  "  YY        YY  ",
+  "  YY        YY  ",
+  "  YgY      YgY  ",
+  "  YYY      YYY  ",
+  "   YYYYYYYYYY   ",
+  "  YYYYYYYYYYYY  ",
+  " YYNNYYyyYYNNYY ",
+  " YYNNYYyyYYNNYY ",
+  " YYYYYyKKyYYYYY ",
+  "  YYNNNNNNNNYY  ",
+  "   YYYYYYYYYY   ",
+  "   YgYYYYYYgY   ",
+  "    YYYYYYYY    ",
+  "    YY    YY    ",
+  "    YY    YY    ",
+  "    NN    NN    "
+];
+const LEY_SPRINGLOCK = {
+  Y: COLORES.amarillo,
+  g: "#a09030",
+  y: "#c0a040",
+  N: COLORES.negro,
+  K: COLORES.negro
+};
+
+// Paleta para Polar cuando lleva el traje (mantiene la silueta del oso
+// pero pintada con los colores del Spring Bonnie - amarillo/oro)
+const LEY_POLAR_DISFRAZ = {
+  B: COLORES.amarillo,    // pelaje blanco -> amarillo
+  N: COLORES.negro,
+  R: COLORES.morado,      // mejillas rosa -> moradas (toque Bonnie)
+  H: "#c0a040",           // hocico crema -> dorado
+  K: COLORES.negro,
+  S: "#a09030"            // sombra fría -> sombra dorada oscura
+};
+
+// Lista de tipos de animatrónico para rotar al hacer spawn
+const ANIMATRONICOS = [
+  { sprite: SPRITE_ENEMIGO, leyenda: LEY_ENEMIGO,  nombre: "FREDDY" },
+  { sprite: SPRITE_BONNIE,  leyenda: LEY_BONNIE,   nombre: "BONNIE" },
+  { sprite: SPRITE_CHICA,   leyenda: LEY_CHICA,    nombre: "CHICA"  },
+  { sprite: SPRITE_FOXY,    leyenda: LEY_FOXY,     nombre: "FOXY"   }
+];
+
+/* Corazón (vidas) */
+const SPRITE_CORAZON = [
+  " RR  RR ",
+  "RRRRRRRR",
+  "RRRRRRRR",
+  "RRRRRRRR",
+  " RRRRRR ",
+  "  RRRR  ",
+  "   RR   "
+];
+const LEY_CORAZON = { R: COLORES.rojo };
+
+/* Árbol pixelado */
+const SPRITE_ARBOL = [
+  "   VVVV   ",
+  "  VVVVVV  ",
+  " VVVVVVVV ",
+  " VWVVVVVV ",
+  "VVVVVVVVVV",
+  "VVVVVVVVVV",
+  "  MMMM    ",
+  "  MMMM    ",
+  "  MMMM    "
+];
+const LEY_ARBOL = { V: COLORES.verdeOscuro, W: COLORES.verde, M: COLORES.marron };
+
+// -------------------- DIBUJADO DE PERSONAJES Y OBJETOS --------------------
+
+function dibujarPolar(x, y, escala = PX, paso = false, disfrazado = false) {
+  // Polar va con borde negro para resaltar contra la nieve.
+  // Cuando lleva el springlock se pinta con la paleta amarilla.
+  const ley = disfrazado ? LEY_POLAR_DISFRAZ : LEY_POLAR;
+  dibujarSpriteConBorde(paso ? SPRITE_POLAR_PASO : SPRITE_POLAR, x, y, ley, escala);
+}
+
+function dibujarSpringlock(x, y, escala = PX) {
+  dibujarSprite(SPRITE_SPRINGLOCK, x, y, LEY_SPRINGLOCK, escala);
+}
+
+function dibujarPingui(x, y, escala = PX) {
+  dibujarSprite(SPRITE_PINGUI, x, y, LEY_PINGUI, escala);
+}
+
+function dibujarPescado(x, y, escala = PX) {
+  dibujarSprite(SPRITE_PESCADO, x, y, LEY_PESCADO, escala);
+}
+
+function dibujarIceberg(x, y, escala = PX) {
+  dibujarSprite(SPRITE_ICEBERG, x, y, LEY_ICEBERG, escala);
+}
+
+function dibujarArbol(x, y, escala = PX) {
+  dibujarSprite(SPRITE_ARBOL, x, y, LEY_ARBOL, escala);
+}
+
+function dibujarRefri(x, y, abierto = false, escala = PX) {
+  const sprite = abierto ? SPRITE_REFRI_ABIERTO : SPRITE_REFRI_CERRADO;
+  dibujarSprite(sprite, x, y, LEY_REFRI, escala);
+}
+
+function dibujarEnemigo(x, y, sprite, leyenda, escala = PX) {
+  dibujarSprite(sprite || SPRITE_ENEMIGO, x, y, leyenda || LEY_ENEMIGO, escala);
+}
+
+function dibujarCorazon(x, y, escala = 3) {
+  dibujarSprite(SPRITE_CORAZON, x, y, LEY_CORAZON, escala);
+}
+
+// Dibuja un bocadillo de cómic pixelado (caja blanca + borde negro grueso + colita)
+function dibujarBocadillo(x, y, ancho, alto, lineas, colitaX) {
+  // sombra
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x + 6, y + 6, ancho, alto);
+  // borde negro grueso
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x - 4, y - 4, ancho + 8, alto + 8);
+  // fondo blanco
+  ctx.fillStyle = COLORES.blanco;
+  ctx.fillRect(x, y, ancho, alto);
+
+  // colita (apuntando hacia abajo)
+  if (colitaX !== null) {
+    ctx.fillStyle = COLORES.negro;
+    ctx.fillRect(colitaX - 8, y + alto, 24, 16);
+    ctx.fillRect(colitaX - 4, y + alto + 12, 16, 8);
+    ctx.fillStyle = COLORES.blanco;
+    ctx.fillRect(colitaX - 4, y + alto, 16, 12);
+  }
+
+  // texto adentro
+  ctx.fillStyle = COLORES.negro;
+  const tam = 12;
+  ctx.font = `${tam}px 'Press Start 2P', 'Courier New', monospace`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const cx = x + ancho / 2;
+  const inicioY = y + alto / 2 - ((lineas.length - 1) * (tam + 6)) / 2;
+  for (let i = 0; i < lineas.length; i++) {
+    ctx.fillText(lineas[i], cx, inicioY + i * (tam + 6));
+  }
+}
+
+// Botón pixelado (rectangular con borde negro grueso)
+function dibujarBoton(x, y, ancho, alto, etiqueta, colorFondo, colorTexto, parpadeo = false) {
+  const visible = parpadeo ? (Math.floor(Date.now() / 400) % 2 === 0) : true;
+  // borde negro grueso
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x - 4, y - 4, ancho + 8, alto + 8);
+  // fondo
+  ctx.fillStyle = colorFondo;
+  ctx.fillRect(x, y, ancho, alto);
+  // brillo (línea superior)
+  ctx.fillStyle = COLORES.blanco;
+  ctx.fillRect(x, y, ancho, 4);
+  ctx.fillRect(x, y, 4, alto);
+  // sombra interior
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x, y + alto - 4, ancho, 4);
+  ctx.fillRect(x + ancho - 4, y, 4, alto);
+  // etiqueta
+  if (visible) {
+    texto(etiqueta, x + ancho / 2, y + alto / 2 - 8, colorTexto, 14, COLORES.negro, "center");
+  }
+}
+
+// -------------------- ESCENARIOS DE FONDO --------------------
+
+// =================================================================
+// MUEBLES Y DECORACIÓN DE LA CASA
+// Cada función dibuja un objeto pixelado en una posición fija.
+// =================================================================
+
+// LÁMPARA DE TECHO colgando, con bombilla encendida
+function dibujarLampara() {
+  const cx = 400;
+  // cable colgante
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(cx - 2, 0, 4, 24);
+  // soporte
+  ctx.fillRect(cx - 14, 24, 28, 4);
+  // pantalla cónica (de arriba abajo se va ensanchando)
+  ctx.fillStyle = COLORES.amarillo;
+  ctx.fillRect(cx - 16, 28, 32, 8);
+  ctx.fillStyle = COLORES.naranja;
+  ctx.fillRect(cx - 24, 36, 48, 8);
+  ctx.fillStyle = "#d05010";
+  ctx.fillRect(cx - 32, 44, 64, 8);
+  // borde inferior negro
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(cx - 32, 52, 64, 4);
+  // bombilla
+  ctx.fillStyle = COLORES.blanco;
+  ctx.fillRect(cx - 8, 56, 16, 4);
+  ctx.fillStyle = COLORES.amarillo;
+  ctx.fillRect(cx - 4, 60, 8, 4);
+  // halo de luz hacia los lados
+  ctx.fillStyle = COLORES.amarillo;
+  ctx.fillRect(cx - 36, 50, 4, 4);
+  ctx.fillRect(cx + 32, 50, 4, 4);
+  ctx.fillRect(cx - 40, 56, 4, 4);
+  ctx.fillRect(cx + 36, 56, 4, 4);
+}
+
+// CUADRO con paisaje pixelado (cielo, sol, montañas, nieve)
+function dibujarCuadro() {
+  const x = 480, y = 80, w = 90, h = 70;
+  // marco con borde negro y dorado
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x - 4, y - 4, w + 8, h + 8);
+  ctx.fillStyle = COLORES.amarillo;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = COLORES.marronOscuro;
+  ctx.fillRect(x + 4, y + 4, w - 8, h - 8);
+  // cielo
+  ctx.fillStyle = COLORES.cian;
+  ctx.fillRect(x + 8, y + 8, w - 16, 30);
+  // sol amarillo
+  ctx.fillStyle = COLORES.amarillo;
+  ctx.fillRect(x + w - 28, y + 12, 12, 12);
+  ctx.fillRect(x + w - 26, y + 10, 8, 16);
+  // montañas (hielo)
+  ctx.fillStyle = COLORES.azulHielo;
+  ctx.fillRect(x + 8, y + 28, 30, 14);
+  ctx.fillRect(x + 14, y + 22, 18, 8);
+  ctx.fillRect(x + 32, y + 26, 28, 16);
+  ctx.fillRect(x + 50, y + 30, 22, 14);
+  // nieve abajo
+  ctx.fillStyle = COLORES.blanco;
+  ctx.fillRect(x + 8, y + 42, w - 16, h - 50);
+  // arbolitos
+  ctx.fillStyle = COLORES.verdeOscuro;
+  ctx.fillRect(x + 14, y + 44, 6, 8);
+  ctx.fillRect(x + 30, y + 46, 6, 6);
+}
+
+// TELE retro de tubo con antena de cuernos
+function dibujarTV() {
+  const x = 320, y = 100, w = 130, h = 90;
+  // antena en V
+  ctx.fillStyle = COLORES.grisOscuro;
+  ctx.fillRect(x + 30, y - 26, 4, 26);
+  ctx.fillRect(x + w - 34, y - 26, 4, 26);
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x + 22, y - 30, 18, 4);
+  ctx.fillRect(x + w - 40, y - 30, 18, 4);
+  // base / soporte
+  ctx.fillStyle = COLORES.grisOscuro;
+  ctx.fillRect(x + 50, y - 8, 30, 8);
+  // mueble TV (madera oscura con borde)
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x - 4, y - 4, w + 8, h + 8);
+  ctx.fillStyle = COLORES.marronOscuro;
+  ctx.fillRect(x, y, w, h);
+  // pantalla con marco
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x + 8, y + 8, w - 36, h - 16);
+  ctx.fillStyle = COLORES.azulOscuro;
+  ctx.fillRect(x + 10, y + 10, w - 40, h - 20);
+  // estática animada en la pantalla
+  for (let i = 0; i < 20; i++) {
+    const sx = x + 12 + ((i * 13 + Math.floor(Date.now() / 250)) % (w - 44));
+    const sy = y + 12 + ((i * 9 + Math.floor(Date.now() / 350)) % (h - 24));
+    ctx.fillStyle = (i % 4 === 0) ? COLORES.blanco : COLORES.cian;
+    ctx.fillRect(sx, sy, 4, 4);
+  }
+  // perillas de control
+  ctx.fillStyle = COLORES.amarillo;
+  ctx.fillRect(x + w - 22, y + 16, 12, 12);
+  ctx.fillStyle = COLORES.rojo;
+  ctx.fillRect(x + w - 22, y + 36, 12, 12);
+  ctx.fillStyle = COLORES.cian;
+  ctx.fillRect(x + w - 22, y + 56, 12, 12);
+  // patitas
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x + 14, y + h, 6, 8);
+  ctx.fillRect(x + w - 20, y + h, 6, 8);
+}
+
+// SOFÁ rojo de dos plazas con cojines y costuras
+function dibujarSofa() {
+  const x = 20, y = 320, w = 200, h = 100;
+  // borde negro
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x - 4, y - 4, w + 8, h + 8);
+  // respaldo
+  ctx.fillStyle = COLORES.rojo;
+  ctx.fillRect(x, y, w, 36);
+  // brazos
+  ctx.fillRect(x, y + 14, 26, h - 14);
+  ctx.fillRect(x + w - 26, y + 14, 26, h - 14);
+  // asiento (más oscuro)
+  ctx.fillStyle = "#a01818";
+  ctx.fillRect(x + 26, y + 36, w - 52, 50);
+  // separación de cojines
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x + 26 + (w - 52) / 2 - 2, y + 36, 4, 50);
+  // detalles brillantes en respaldo
+  ctx.fillStyle = COLORES.rosa;
+  ctx.fillRect(x + 36, y + 8, 32, 4);
+  ctx.fillRect(x + 116, y + 8, 32, 4);
+  // costuras amarillas en esquinas
+  ctx.fillStyle = COLORES.amarillo;
+  ctx.fillRect(x + 6, y + 6, 4, 4);
+  ctx.fillRect(x + w - 10, y + 6, 4, 4);
+  // patitas
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x + 8, y + h, 8, 8);
+  ctx.fillRect(x + w - 16, y + h, 8, 8);
+}
+
+// MESA pequeña con florero encima
+function dibujarMesa() {
+  const x = 440, y = 370, w = 100, h = 50;
+  // tabla con borde negro
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x - 4, y - 4, w + 8, 14);
+  ctx.fillStyle = COLORES.marronClaro;
+  ctx.fillRect(x, y, w, 8);
+  ctx.fillStyle = COLORES.marron;
+  ctx.fillRect(x, y + 8, w, 2);
+  // patas
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x + 6, y + 10, 8, h - 10);
+  ctx.fillRect(x + w - 14, y + 10, 8, h - 10);
+  ctx.fillStyle = COLORES.marronOscuro;
+  ctx.fillRect(x + 8, y + 10, 4, h - 10);
+  ctx.fillRect(x + w - 12, y + 10, 4, h - 10);
+  // florero encima
+  const fx = x + 38, fy = y - 24;
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(fx - 2, fy, 28, 26);
+  ctx.fillStyle = COLORES.cian;
+  ctx.fillRect(fx, fy + 2, 24, 22);
+  ctx.fillStyle = COLORES.azulHielo;
+  ctx.fillRect(fx + 2, fy + 4, 6, 16);
+  // tallo + flor
+  ctx.fillStyle = COLORES.verde;
+  ctx.fillRect(fx + 10, fy - 16, 4, 18);
+  ctx.fillStyle = COLORES.rojo;
+  ctx.fillRect(fx + 4, fy - 22, 16, 8);
+  ctx.fillStyle = COLORES.amarillo;
+  ctx.fillRect(fx + 8, fy - 20, 8, 4);
+  // hojita lateral
+  ctx.fillStyle = COLORES.verde;
+  ctx.fillRect(fx + 2, fy - 8, 8, 4);
+  ctx.fillRect(fx + 14, fy - 12, 8, 4);
+}
+
+// PUERTA DE SALIDA con letrero "SALIDA"
+function dibujarPuerta() {
+  const x = 720, y = 170, w = 70, h = 250;
+  // marco negro
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x - 6, y - 6, w + 12, h + 12);
+  // hoja de la puerta (madera clara)
+  ctx.fillStyle = COLORES.marronClaro;
+  ctx.fillRect(x, y, w, h);
+  // 3 paneles
+  ctx.fillStyle = COLORES.marronOscuro;
+  ctx.fillRect(x + 8, y + 12, w - 16, 60);
+  ctx.fillRect(x + 8, y + 84, w - 16, 60);
+  ctx.fillRect(x + 8, y + 156, w - 16, 50);
+  ctx.fillStyle = COLORES.marron;
+  ctx.fillRect(x + 12, y + 16, w - 24, 52);
+  ctx.fillRect(x + 12, y + 88, w - 24, 52);
+  ctx.fillRect(x + 12, y + 160, w - 24, 42);
+  // perilla dorada
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x + w - 18, y + h / 2 - 6, 12, 12);
+  ctx.fillStyle = COLORES.amarillo;
+  ctx.fillRect(x + w - 16, y + h / 2 - 4, 8, 8);
+  ctx.fillStyle = COLORES.naranja;
+  ctx.fillRect(x + w - 14, y + h / 2 - 2, 4, 4);
+  // letrero SALIDA arriba de la puerta
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x, y - 30, w, 22);
+  ctx.fillStyle = COLORES.rojo;
+  ctx.fillRect(x + 4, y - 28, w - 8, 18);
+  ctx.font = "10px 'Press Start 2P', 'Courier New', monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = COLORES.blanco;
+  ctx.fillText("SALIDA", x + w / 2, y - 19);
+}
+
+// PLANTA en maceta naranja (decoración esquina)
+function dibujarPlanta() {
+  const x = 660, y = 320;
+  // hojas oscuras detrás
+  ctx.fillStyle = COLORES.verdeOscuro;
+  ctx.fillRect(x + 6, y + 4, 32, 12);
+  ctx.fillRect(x, y + 14, 44, 16);
+  ctx.fillRect(x + 8, y + 30, 28, 10);
+  // hojas verde claro encima
+  ctx.fillStyle = COLORES.verde;
+  ctx.fillRect(x + 12, y + 8, 20, 8);
+  ctx.fillRect(x + 4, y + 18, 12, 10);
+  ctx.fillRect(x + 28, y + 18, 12, 10);
+  ctx.fillRect(x + 14, y + 30, 16, 8);
+  // tallo
+  ctx.fillStyle = COLORES.marronOscuro;
+  ctx.fillRect(x + 18, y + 38, 8, 14);
+  // maceta con borde negro
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x + 2, y + 50, 40, 4);
+  ctx.fillRect(x + 4, y + 54, 36, 32);
+  ctx.fillStyle = COLORES.naranja;
+  ctx.fillRect(x + 6, y + 54, 32, 30);
+  ctx.fillStyle = "#c05010";
+  ctx.fillRect(x + 6, y + 54, 32, 4);
+  ctx.fillRect(x + 6, y + 80, 32, 4);
+  // detalles decorativos en la maceta
+  ctx.fillStyle = COLORES.amarillo;
+  ctx.fillRect(x + 12, y + 64, 4, 4);
+  ctx.fillRect(x + 22, y + 68, 4, 4);
+  ctx.fillRect(x + 30, y + 64, 4, 4);
+}
+
+// TAPETE/ALFOMBRA roja con patrón
+function dibujarTapete() {
+  const x = 240, y = 420, w = 320, h = 40;
+  // borde negro
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x - 2, y - 2, w + 4, h + 4);
+  // base roja
+  ctx.fillStyle = COLORES.rojo;
+  ctx.fillRect(x, y, w, h);
+  // bordes amarillos
+  ctx.fillStyle = COLORES.amarillo;
+  ctx.fillRect(x, y, w, 4);
+  ctx.fillRect(x, y + h - 4, w, 4);
+  ctx.fillRect(x, y, 4, h);
+  ctx.fillRect(x + w - 4, y, 4, h);
+  // patrón de rombos
+  for (let i = 0; i < 7; i++) {
+    const dx = x + 30 + i * 40;
+    ctx.fillStyle = COLORES.amarillo;
+    ctx.fillRect(dx + 4, y + 14, 4, 12);
+    ctx.fillRect(dx, y + 18, 12, 4);
+    ctx.fillStyle = COLORES.blanco;
+    ctx.fillRect(dx + 4, y + 18, 4, 4);
+  }
+}
+
+// VENTANA con vista a la nieve
+function dibujarVentana() {
+  const vx = 110, vy = 70, vw = 180, vh = 140;
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(vx - 8, vy - 8, vw + 16, vh + 16);
+  ctx.fillStyle = COLORES.azulOscuro;
+  ctx.fillRect(vx, vy, vw, vh);
+  // colinas nevadas dentro de la ventana
+  ctx.fillStyle = COLORES.blanco;
+  ctx.fillRect(vx, vy + vh - 50, vw, 50);
+  ctx.fillRect(vx + 30, vy + vh - 70, 50, 20);
+  ctx.fillRect(vx + 100, vy + vh - 80, 60, 30);
+  // copitos de nieve
+  for (let i = 0; i < 8; i++) {
+    const fx = vx + ((i * 23 + 11) % vw);
+    const fy = vy + ((i * 17 + 9) % (vh - 60));
+    ctx.fillRect(fx, fy, 4, 4);
+  }
+  // cruz del marco
+  ctx.fillStyle = COLORES.marronOscuro;
+  ctx.fillRect(vx + vw / 2 - 4, vy, 8, vh);
+  ctx.fillRect(vx, vy + vh / 2 - 4, vw, 8);
+}
+
+// Fondo de la casa de madera con todos los muebles
+function dibujarFondoCasa() {
+  // pared de tablones de madera
+  ctx.fillStyle = COLORES.marronClaro;
+  ctx.fillRect(0, 0, ANCHO, ALTO - 80);
+  // tablones (líneas horizontales)
+  ctx.fillStyle = COLORES.marronOscuro;
+  for (let y = 0; y < ALTO - 80; y += 40) {
+    ctx.fillRect(0, y, ANCHO, 4);
+  }
+  // vetas verticales suaves
+  ctx.fillStyle = COLORES.marron;
+  for (let x = 0; x < ANCHO; x += 80) {
+    ctx.fillRect(x, 0, 4, ALTO - 80);
+  }
+
+  // piso de madera
+  ctx.fillStyle = COLORES.marron;
+  ctx.fillRect(0, ALTO - 80, ANCHO, 80);
+  ctx.fillStyle = COLORES.marronOscuro;
+  for (let x = 0; x < ANCHO; x += 60) {
+    ctx.fillRect(x, ALTO - 80, 4, 80);
+  }
+  ctx.fillRect(0, ALTO - 80, ANCHO, 4);
+
+  // --- elementos en la pared (al fondo) ---
+  dibujarLampara();
+  dibujarVentana();
+  dibujarTV();
+  dibujarCuadro();
+  dibujarPuerta();
+
+  // --- muebles delante de la pared, antes que los personajes ---
+  dibujarTapete();
+  dibujarSofa();
+  dibujarMesa();
+  dibujarPlanta();
+}
+
+// Fondo del título: noche ártica con copos cayendo
+let copos = [];
+function inicializarCopos(cantidad) {
+  copos = [];
+  for (let i = 0; i < cantidad; i++) {
+    copos.push({
+      x: Math.random() * ANCHO,
+      y: Math.random() * ALTO,
+      v: 0.4 + Math.random() * 1.0,
+      tam: Math.random() < 0.5 ? 4 : 8
+    });
+  }
+}
+function dibujarFondoTitulo() {
+  // gradiente simulado con bandas
+  ctx.fillStyle = "#02061c";
+  ctx.fillRect(0, 0, ANCHO, ALTO);
+  ctx.fillStyle = "#0a1a4a";
+  ctx.fillRect(0, ALTO * 0.5, ANCHO, ALTO * 0.5);
+  ctx.fillStyle = "#1a3a8a";
+  ctx.fillRect(0, ALTO * 0.75, ANCHO, ALTO * 0.25);
+  // colinas pixeladas al fondo
+  ctx.fillStyle = COLORES.blanco;
+  ctx.fillRect(0, ALTO - 60, ANCHO, 60);
+  ctx.fillRect(80, ALTO - 100, 200, 40);
+  ctx.fillRect(420, ALTO - 110, 240, 50);
+  // copos
+  ctx.fillStyle = COLORES.blanco;
+  for (const c of copos) {
+    ctx.fillRect(Math.floor(c.x), Math.floor(c.y), c.tam, c.tam);
+    c.y += c.v;
+    c.x += Math.sin(c.y * 0.02) * 0.3;
+    if (c.y > ALTO) { c.y = -10; c.x = Math.random() * ANCHO; }
+  }
+  // estrellas
+  ctx.fillStyle = COLORES.blanco;
+  const semilla = [13, 41, 77, 122, 199, 233, 277, 333, 411, 488, 555, 622, 700, 755];
+  for (let i = 0; i < semilla.length; i++) {
+    const sx = (semilla[i] * 7) % ANCHO;
+    const sy = (semilla[i] * 3) % (ALTO * 0.5);
+    if ((Math.floor(Date.now() / 400) + i) % 5 !== 0) {
+      ctx.fillRect(sx, sy, 4, 4);
+    }
+  }
+}
+
+// Fondo del juego: mapa nevado pixelado
+function dibujarFondoMapa() {
+  // cielo celeste
+  ctx.fillStyle = COLORES.azulClaro;
+  ctx.fillRect(0, 0, ANCHO, ALTO);
+  // nieve en el suelo
+  ctx.fillStyle = COLORES.blanco;
+  ctx.fillRect(0, 80, ANCHO, ALTO - 80);
+  // bordes irregulares de nieve (escalones pixelados)
+  ctx.fillStyle = COLORES.blanco;
+  for (let x = 0; x < ANCHO; x += 32) {
+    const h = 60 + ((x * 13) % 24);
+    ctx.fillRect(x, 80 - (h - 60), 32, h - 60);
+  }
+  // copitos en el suelo (textura)
+  ctx.fillStyle = COLORES.azulClaro;
+  for (let i = 0; i < 50; i++) {
+    const fx = (i * 53) % ANCHO;
+    const fy = 100 + ((i * 73) % (ALTO - 120));
+    ctx.fillRect(fx, fy, 4, 4);
+    ctx.fillRect(fx + 4, fy + 4, 4, 4);
+  }
+}
+
+// -------------------- ESTADO INICIAL: PANTALLA DE ESPERA --------------------
+
+function dibujarEspera() {
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(0, 0, ANCHO, ALTO);
+
+  // logo arriba
+  texto("POLAR Y PINGUI", ANCHO / 2, 130, COLORES.cian, 36, COLORES.azulOscuro, "center");
+
+  // mensaje parpadeante
+  if (Math.floor(Date.now() / 500) % 2 === 0) {
+    texto("PRESIONA PARA COMENZAR", ANCHO / 2, 260, COLORES.amarillo, 18, COLORES.rojo, "center");
+  }
+
+  texto("(C) 1986  POLAR-CO", ANCHO / 2, 420, COLORES.blanco, 12, null, "center");
+
+  // pequeños polar y pingui decorativos
+  dibujarPolar(120, 320, 4);
+  dibujarPingui(620, 330, 4);
+}
+
+// -------------------- INTRO (escena animada) --------------------
+
+const DIALOGOS_INTRO = [
+  { quien: "polar",  texto: ["¡QUE BUENO ESTAR DE", "REGRESO, PINGUI!"] },
+  { quien: "pingui", texto: ["¡SI! ¿Y AHORA QUE", "COMEMOS?"] },
+  { quien: "polar",  texto: ["¡MMM... PESCADO!"] },
+  { quien: "pingui", texto: ["¡SI, PESCADO!"] },
+  // (aquí va la animación de Polar caminando al refri)
+  { quien: "polar",  texto: ["¡AY NO, NO HAY", "PESCADO!"] },
+  { quien: "polar",  texto: ["¡YA VUELVO PINGUI,", "VOY A PESCAR!"] },
+  { quien: "pingui", texto: ["¡TE ESPERO AQUI,", "AMIGO!"] }
+];
+
+let introTiempo = 0;        // contador de frames desde que arranca la intro
+let introFase = 0;          // índice de la fase actual
+let introDialogoActual = 0;
+let introPolarX = 320;      // posición de Polar en la casa
+let introPolarY = 280;
+let introPolarPaso = false;
+let introRefriAbierto = false;
+let introExclamacion = false;
+let introFadeOut = 0;       // 0..1 para el fade a negro al final
+
+// Posiciones clave
+const POS_REFRI = { x: 590, y: 200 };
+const POS_POLAR_FRENTE_REFRI = { x: 510, y: 280 };
+
+// Manejo del tiempo de los diálogos (en milisegundos)
+const DURACION_DIALOGO = 2400;
+
+function actualizarIntro(dt) {
+  introTiempo += dt;
+
+  // Animación pasos
+  if (Math.floor(introTiempo / 200) % 2 === 0) introPolarPaso = true;
+  else introPolarPaso = false;
+
+  // Fases:
+  // 0: dialogo 0 (polar saluda)
+  // 1: dialogo 1 (pingui)
+  // 2: dialogo 2 (polar pescado)
+  // 3: dialogo 3 (pingui sí pescado)
+  // 4: polar camina al refri
+  // 5: refri abierto, exclamacion, dialogo 4
+  // 6: dialogo 5 (voy a pescar)
+  // 7: dialogo 6 (te espero)
+  // 8: polar sale caminando a la derecha
+  // 9: fade a negro
+  // 10: pasa a titulo
+
+  const fase = introFase;
+
+  if (fase <= 3) {
+    introDialogoActual = fase;
+    if (introTiempo > DURACION_DIALOGO) {
+      introFase++;
+      introTiempo = 0;
+    }
+  } else if (fase === 4) {
+    // caminar al refri
+    const dx = POS_POLAR_FRENTE_REFRI.x - introPolarX;
+    if (Math.abs(dx) > 2) {
+      introPolarX += Math.sign(dx) * 1.6;
+    } else {
+      introPolarX = POS_POLAR_FRENTE_REFRI.x;
+      introFase = 5;
+      introTiempo = 0;
+      introRefriAbierto = true;
+      introExclamacion = true;
+    }
+  } else if (fase === 5) {
+    introDialogoActual = 4;
+    if (introTiempo > DURACION_DIALOGO + 400) {
+      introFase = 6;
+      introTiempo = 0;
+    }
+  } else if (fase === 6) {
+    introDialogoActual = 5;
+    if (introTiempo > DURACION_DIALOGO) {
+      introFase = 7;
+      introTiempo = 0;
+      introExclamacion = false;
+    }
+  } else if (fase === 7) {
+    introDialogoActual = 6;
+    if (introTiempo > DURACION_DIALOGO) {
+      introFase = 8;
+      introTiempo = 0;
+      introRefriAbierto = false;
+    }
+  } else if (fase === 8) {
+    // Polar camina hacia la puerta de salida y la "atraviesa" (fade)
+    introPolarX += 2.2;
+    if (introPolarX > 720) {
+      introFase = 9;
+      introTiempo = 0;
+    }
+  } else if (fase === 9) {
+    introFadeOut = Math.min(1, introFadeOut + 0.02);
+    if (introFadeOut >= 1) {
+      introFase = 10;
+    }
+  } else if (fase === 10) {
+    // ir al título
+    detenerMusicaIntro();
+    cambiarA("titulo");
+  }
+}
+
+function dibujarIntro() {
+  dibujarFondoCasa();
+
+  // refri al fondo (esquina derecha)
+  if (introRefriAbierto) {
+    dibujarRefri(POS_REFRI.x, POS_REFRI.y, true, 4);
+  } else {
+    dibujarRefri(POS_REFRI.x, POS_REFRI.y, false, 4);
+  }
+
+  // Pingui (siempre presente a la izquierda)
+  dibujarPingui(220, 290, 4);
+
+  // Polar
+  dibujarPolar(Math.floor(introPolarX), Math.floor(introPolarY), 4, introPolarPaso);
+
+  // signo de exclamación rojo parpadeante sobre Polar
+  if (introExclamacion && Math.floor(Date.now() / 250) % 2 === 0) {
+    const ex = Math.floor(introPolarX) + 30;
+    const ey = Math.floor(introPolarY) - 50;
+    ctx.fillStyle = COLORES.negro;
+    ctx.fillRect(ex - 4, ey - 4, 24, 50);
+    ctx.fillStyle = COLORES.rojo;
+    ctx.fillRect(ex, ey, 16, 26);
+    ctx.fillRect(ex, ey + 32, 16, 12);
+  }
+
+  // Bocadillo del diálogo actual (no en fase 4 ni 8/9)
+  if (introFase <= 3 || (introFase >= 5 && introFase <= 7)) {
+    const d = DIALOGOS_INTRO[introDialogoActual];
+    let bx, by, colita;
+    if (d.quien === "polar") {
+      bx = Math.min(ANCHO - 360, Math.max(20, Math.floor(introPolarX) - 100));
+      by = 60;
+      colita = bx + 100;
+    } else {
+      bx = 60;
+      by = 60;
+      colita = bx + 200;
+    }
+    dibujarBocadillo(bx, by, 340, 90, d.texto, colita);
+  }
+
+  // Botón "SALTAR ▶" abajo a la derecha
+  dibujarBoton(ANCHO - 150, ALTO - 56, 130, 40, "SALTAR >", COLORES.amarillo, COLORES.negro, false);
+
+  // Fade a negro al final
+  if (introFadeOut > 0) {
+    ctx.fillStyle = `rgba(0,0,0,${introFadeOut})`;
+    ctx.fillRect(0, 0, ANCHO, ALTO);
+  }
+}
+
+// -------------------- TÍTULO --------------------
+
+let bouncePhase = 0;
+
+function dibujarTitulo() {
+  dibujarFondoTitulo();
+
+  // Título grande con efecto parpadeo suave (aumenta brillo periódicamente)
+  const brilloAlt = (Math.sin(Date.now() / 300) + 1) / 2;
+  const colorTitulo = brilloAlt > 0.5 ? COLORES.blanco : "#dde8ff";
+
+  texto("POLAR Y PINGUI", ANCHO / 2, 110, colorTitulo, 44, COLORES.cian, "center");
+  // sombra adicional cian (pixelada)
+  texto("POLAR Y PINGUI", ANCHO / 2 - 4, 106, "#3aa0e8", 44, null, "center");
+  texto("POLAR Y PINGUI", ANCHO / 2, 110, colorTitulo, 44, null, "center");
+
+  // Subtítulo
+  texto("UNA AVENTURA EN EL HIELO", ANCHO / 2, 175, COLORES.amarillo, 14, COLORES.negro, "center");
+
+  // Botón JUGAR (parpadea)
+  dibujarBoton(ANCHO / 2 - 110, 250, 220, 70, "> JUGAR", COLORES.rojo, COLORES.blanco, true);
+
+  // Texto pequeño abajo
+  texto("USA LAS FLECHAS PARA MOVER A POLAR", ANCHO / 2, 370, COLORES.cian, 11, COLORES.negro, "center");
+  texto("¡CUIDADO CON LOS ANIMATRONICOS!", ANCHO / 2, 395, COLORES.rojo, 11, COLORES.amarillo, "center");
+  texto("PRESS START", ANCHO / 2, 425, COLORES.blanco, 10, null, "center");
+
+  // Polar y Pingui idle bounce a los lados
+  bouncePhase += 0.08;
+  const yOff1 = Math.floor(Math.sin(bouncePhase) * 4);
+  const yOff2 = Math.floor(Math.sin(bouncePhase + 1) * 4);
+  dibujarPolar(60, 280 + yOff1, 4);
+  dibujarPingui(660, 290 + yOff2, 4);
+}
+
+// -------------------- JUEGO (mapa con pescados) --------------------
+
+const polar = {
+  x: 60,
+  y: 380,
+  ancho: 18 * PX,
+  alto: 16 * PX,
+  vel: 4
+};
+
+let pingui = { x: 700, y: 380, ancho: 16 * PX, alto: 16 * PX };
+
+let pescados = [];
+let icebergs = [];
+let enemigos = [];
+let puntuacion = 0;
+let pescadosRecogidos = 0;
+let totalPescadosNivel = 10;
+
+// --- Sistema de niveles ---
+let nivel = 1;
+let vidas = 3;
+const NIVEL_MAX = 10;
+
+// invulnerabilidad temporal tras recibir golpe (frames)
+let invulnerable = 0;
+
+// --- Portal matemático (niveles pares) ---
+let portal = null;          // { x, y, ancho, alto, usado: bool }
+let preguntaActual = null;  // { enunciado, correcta, opciones[4] }
+let feedbackMate = null;    // { texto, color, timer }
+
+// --- Springlocks (disfraz de animatrónico) ---
+let springlocks = [];        // [{x,y,ancho,alto,recogido}]
+let disfrazTimer = 0;        // frames restantes con el traje puesto
+const DISFRAZ_DUR = 480;     // 8 segundos a 60fps
+
+let teclas = {};
+
+// Genera una pregunta matemática según el nivel actual.
+// La dificultad sube con el nivel: en niveles bajos sumas, luego restas y multiplicaciones.
+function generarPregunta() {
+  let a, b, op, respuesta;
+  if (nivel <= 2) {
+    a = 1 + Math.floor(Math.random() * 9);
+    b = 1 + Math.floor(Math.random() * 9);
+    op = "+";
+    respuesta = a + b;
+  } else if (nivel <= 4) {
+    a = 5 + Math.floor(Math.random() * 15);
+    b = 1 + Math.floor(Math.random() * 10);
+    op = Math.random() < 0.5 ? "+" : "-";
+    if (op === "-" && b > a) { const t = a; a = b; b = t; }
+    respuesta = (op === "+") ? a + b : a - b;
+  } else if (nivel <= 6) {
+    a = 2 + Math.floor(Math.random() * 8);
+    b = 2 + Math.floor(Math.random() * 8);
+    op = "x";
+    respuesta = a * b;
+  } else if (nivel <= 8) {
+    const r = Math.random();
+    if (r < 0.4) {
+      a = 10 + Math.floor(Math.random() * 30); b = 5 + Math.floor(Math.random() * 20);
+      op = "+"; respuesta = a + b;
+    } else if (r < 0.7) {
+      a = 20 + Math.floor(Math.random() * 30); b = 5 + Math.floor(Math.random() * 15);
+      op = "-"; respuesta = a - b;
+    } else {
+      a = 3 + Math.floor(Math.random() * 9); b = 2 + Math.floor(Math.random() * 9);
+      op = "x"; respuesta = a * b;
+    }
+  } else {
+    const r = Math.random();
+    if (r < 0.5) {
+      a = 5 + Math.floor(Math.random() * 11); b = 2 + Math.floor(Math.random() * 11);
+      op = "x"; respuesta = a * b;
+    } else {
+      a = 30 + Math.floor(Math.random() * 50); b = 10 + Math.floor(Math.random() * 30);
+      op = Math.random() < 0.5 ? "+" : "-";
+      if (op === "-" && b > a) { const t = a; a = b; b = t; }
+      respuesta = (op === "+") ? a + b : a - b;
+    }
+  }
+
+  // Genera 3 opciones falsas + la correcta, baraja
+  const opciones = new Set([respuesta]);
+  while (opciones.size < 4) {
+    const delta = Math.floor(Math.random() * Math.max(6, Math.abs(respuesta) / 4)) + 1;
+    const fake = respuesta + (Math.random() < 0.5 ? -delta : delta);
+    if (fake >= 0 && fake !== respuesta) opciones.add(fake);
+  }
+  const arr = Array.from(opciones);
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+
+  return { enunciado: `${a} ${op} ${b} = ?`, correcta: respuesta, opciones: arr };
+}
+
+// El jugador eligió una respuesta (0..3)
+function responder(idx) {
+  if (!preguntaActual || gameState !== "matematicas") return;
+  const acerto = preguntaActual.opciones[idx] === preguntaActual.correcta;
+  const correcta = preguntaActual.correcta;
+  preguntaActual = null;
+  if (acerto) {
+    puntuacion += 100;
+    if (vidas < 3) vidas++;       // recompensa: vida extra (cap 3)
+    sonidoCorrecto();
+    feedbackMate = { texto: "¡CORRECTO! +100 PTS", color: COLORES.verde, timer: 100 };
+  } else {
+    vidas--;
+    sonidoIncorrecto();
+    feedbackMate = { texto: `INCORRECTO! ERA ${correcta}`, color: COLORES.rojo, timer: 100 };
+    if (vidas <= 0) {
+      gameState = "gameover";
+      return;
+    }
+  }
+  // empuja a Polar lejos del portal para que no se vuelva a colisionar
+  polar.x = 60; polar.y = 380;
+  invulnerable = 60;
+  gameState = "jugando";
+}
+
+// Generador pseudo-aleatorio determinista (semilla = nivel)
+// Así cada nivel tiene su propio mapa pero siempre el mismo.
+function rng(semilla) {
+  let s = semilla * 9301 + 49297;
+  return () => {
+    s = (s * 9301 + 49297) % 233280;
+    return s / 233280;
+  };
+}
+
+// Devuelve true si el rectángulo (x,y,w,h) choca con algo de la lista
+function chocaConAlgo(x, y, w, h, lista, margen = 0) {
+  const r = { x: x - margen, y: y - margen, ancho: w + margen * 2, alto: h + margen * 2 };
+  for (const item of lista) {
+    if (colisiona(r, item)) return true;
+  }
+  return false;
+}
+
+// Inicializa el juego completo (al empezar partida)
+function inicializarPartida() {
+  nivel = 1;
+  vidas = 3;
+  puntuacion = 0;
+  invulnerable = 0;
+  inicializarNivel();
+}
+
+// Configura el nivel actual con dificultad creciente
+function inicializarNivel() {
+  polar.x = 60; polar.y = 380;
+  pingui.x = 700; pingui.y = 380;
+  pescadosRecogidos = 0;
+  invulnerable = 0;
+  disfrazTimer = 0;
+
+  // Cantidades por nivel:
+  //   pescados: 10 + (nivel-1), tope 16
+  //   icebergs: 2 + nivel,      tope 9
+  //   enemigos: nivel - 1,      tope 6 (nivel 1 sin enemigos)
+  //   velocidad enemigos: aumenta con nivel
+  totalPescadosNivel = Math.min(10 + (nivel - 1), 16);
+  const cantIcebergs = Math.min(2 + nivel, 9);
+  const cantEnemigos = Math.min(Math.max(0, nivel - 1), 6);
+  const velEnemigo  = 1.4 + nivel * 0.25;
+
+  const ANCHO_PESC = 13 * PX, ALTO_PESC = 7 * PX;
+  const ANCHO_ICE  = 17 * PX, ALTO_ICE  = 12 * PX;
+  const ANCHO_ENE  = 18 * PX, ALTO_ENE  = 18 * PX;
+
+  // Zonas seguras donde NO se generan obstáculos (alrededor de polar y pingui)
+  const zonaPolar  = { x: 40,  y: 360, ancho: 140, alto: 130 };
+  const zonaPingui = { x: 620, y: 360, ancho: 140, alto: 130 };
+  const zonas = [zonaPolar, zonaPingui];
+
+  // Generador con semilla = nivel para que cada nivel sea siempre igual
+  const aleatorio = rng(nivel * 137 + 7);
+
+  // 1) icebergs primero
+  icebergs = [];
+  let intentos = 0;
+  while (icebergs.length < cantIcebergs && intentos < 400) {
+    intentos++;
+    const ix = 40 + Math.floor(aleatorio() * (ANCHO - 80 - ANCHO_ICE));
+    const iy = 100 + Math.floor(aleatorio() * (ALTO - 140 - ALTO_ICE));
+    const candidato = { x: ix, y: iy, ancho: ANCHO_ICE, alto: ALTO_ICE };
+    if (chocaConAlgo(ix, iy, ANCHO_ICE, ALTO_ICE, icebergs, 12)) continue;
+    if (chocaConAlgo(ix, iy, ANCHO_ICE, ALTO_ICE, zonas, 0)) continue;
+    icebergs.push(candidato);
+  }
+
+  // 2) pescados (no encima de icebergs)
+  pescados = [];
+  intentos = 0;
+  while (pescados.length < totalPescadosNivel && intentos < 600) {
+    intentos++;
+    const px = 30 + Math.floor(aleatorio() * (ANCHO - 60 - ANCHO_PESC));
+    const py = 100 + Math.floor(aleatorio() * (ALTO - 130 - ALTO_PESC));
+    if (chocaConAlgo(px, py, ANCHO_PESC, ALTO_PESC, icebergs, 8)) continue;
+    if (chocaConAlgo(px, py, ANCHO_PESC, ALTO_PESC, pescados, 16)) continue;
+    pescados.push({ x: px, y: py, ancho: ANCHO_PESC, alto: ALTO_PESC, recogido: false });
+  }
+
+  // 3.5) PORTAL MATEMÁTICO en niveles pares (2, 4, 6, 8, 10)
+  portal = null;
+  if (nivel % 2 === 0) {
+    const PORT_W = 16 * PX, PORT_H = 16 * PX;
+    let intentos2 = 0;
+    while (intentos2 < 200) {
+      intentos2++;
+      const px = 100 + Math.floor(aleatorio() * (ANCHO - 200 - PORT_W));
+      const py = 110 + Math.floor(aleatorio() * (ALTO - 200 - PORT_H));
+      if (chocaConAlgo(px, py, PORT_W, PORT_H, icebergs, 12)) continue;
+      if (chocaConAlgo(px, py, PORT_W, PORT_H, zonas, 24)) continue;
+      portal = { x: px, y: py, ancho: PORT_W, alto: PORT_H, usado: false };
+      break;
+    }
+  }
+
+  // 3.7) SPRINGLOCKS - trajes que dejan a Polar invisible para los enemigos.
+  // Aparecen desde el nivel 2, escalan con la dificultad (tope 3).
+  springlocks = [];
+  const cantSpringlocks = Math.min(Math.floor(nivel / 2), 3);
+  const SPRING_W = 16 * PX, SPRING_H = 16 * PX;
+  for (let s = 0; s < cantSpringlocks; s++) {
+    let intentosS = 0;
+    while (intentosS < 200) {
+      intentosS++;
+      const sx = 60 + Math.floor(aleatorio() * (ANCHO - 120 - SPRING_W));
+      const sy = 110 + Math.floor(aleatorio() * (ALTO - 200 - SPRING_H));
+      if (chocaConAlgo(sx, sy, SPRING_W, SPRING_H, icebergs, 8)) continue;
+      if (chocaConAlgo(sx, sy, SPRING_W, SPRING_H, springlocks, 16)) continue;
+      if (chocaConAlgo(sx, sy, SPRING_W, SPRING_H, zonas, 16)) continue;
+      if (portal && chocaConAlgo(sx, sy, SPRING_W, SPRING_H, [portal], 16)) continue;
+      springlocks.push({ x: sx, y: sy, ancho: SPRING_W, alto: SPRING_H, recogido: false });
+      break;
+    }
+  }
+
+  // 4) enemigos (animatrónicos) que se mueven
+  enemigos = [];
+  for (let i = 0; i < cantEnemigos; i++) {
+    let ex = 0, ey = 0, ok = false;
+    for (let t = 0; t < 50 && !ok; t++) {
+      ex = 80 + Math.floor(aleatorio() * (ANCHO - 160 - ANCHO_ENE));
+      ey = 110 + Math.floor(aleatorio() * (ALTO - 160 - ALTO_ENE));
+      if (!chocaConAlgo(ex, ey, ANCHO_ENE, ALTO_ENE, icebergs, 8) &&
+          !chocaConAlgo(ex, ey, ANCHO_ENE, ALTO_ENE, zonas, 16)) ok = true;
+    }
+    const angulo = aleatorio() * Math.PI * 2;
+    // Rotamos por los 4 animatrónicos: Freddy, Bonnie, Chica, Foxy.
+    const tipo = ANIMATRONICOS[i % ANIMATRONICOS.length];
+    enemigos.push({
+      x: ex, y: ey,
+      vx: Math.cos(angulo) * velEnemigo,
+      vy: Math.sin(angulo) * velEnemigo * 0.7,
+      ancho: ANCHO_ENE, alto: ALTO_ENE,
+      sprite: tipo.sprite,
+      leyenda: tipo.leyenda,
+      nombre: tipo.nombre
+    });
+  }
+}
+
+// Detección de colisión rectangular simple
+function colisiona(a, b) {
+  return a.x < b.x + b.ancho &&
+         a.x + a.ancho > b.x &&
+         a.y < b.y + b.alto &&
+         a.y + a.alto > b.y;
+}
+
+function actualizarJuego() {
+  if (invulnerable > 0) invulnerable--;
+  if (disfrazTimer > 0) disfrazTimer--;
+
+  let nx = polar.x;
+  let ny = polar.y;
+
+  if (teclas["ArrowLeft"])  nx -= polar.vel;
+  if (teclas["ArrowRight"]) nx += polar.vel;
+  if (teclas["ArrowUp"])    ny -= polar.vel;
+  if (teclas["ArrowDown"])  ny += polar.vel;
+
+  nx = Math.max(8, Math.min(ANCHO - polar.ancho - 8, nx));
+  ny = Math.max(80, Math.min(ALTO - polar.alto - 8, ny));
+
+  const futuroX = { x: nx, y: polar.y, ancho: polar.ancho, alto: polar.alto };
+  const futuroY = { x: polar.x, y: ny, ancho: polar.ancho, alto: polar.alto };
+  let bloqueoX = false, bloqueoY = false;
+  for (const ib of icebergs) {
+    if (colisiona(futuroX, ib)) bloqueoX = true;
+    if (colisiona(futuroY, ib)) bloqueoY = true;
+  }
+  if (!bloqueoX) polar.x = nx;
+  if (!bloqueoY) polar.y = ny;
+
+  // mover enemigos: rebotan contra bordes e icebergs
+  for (const e of enemigos) {
+    let exNuevo = e.x + e.vx;
+    let eyNuevo = e.y + e.vy;
+    if (exNuevo < 8 || exNuevo > ANCHO - e.ancho - 8) e.vx = -e.vx;
+    else e.x = exNuevo;
+    if (eyNuevo < 90 || eyNuevo > ALTO - e.alto - 8) e.vy = -e.vy;
+    else e.y = eyNuevo;
+    for (const ib of icebergs) {
+      if (colisiona(e, ib)) {
+        e.vx = -e.vx; e.vy = -e.vy;
+        e.x += e.vx * 2; e.y += e.vy * 2;
+        break;
+      }
+    }
+  }
+
+  // recoger pescados
+  for (const p of pescados) {
+    if (!p.recogido && colisiona(polar, p)) {
+      p.recogido = true;
+      pescadosRecogidos++;
+      puntuacion += 10;
+      sonidoDing();
+    }
+  }
+
+  // recoger SPRINGLOCK (disfraz)
+  for (const s of springlocks) {
+    if (!s.recogido && colisiona(polar, s)) {
+      s.recogido = true;
+      disfrazTimer = DISFRAZ_DUR;
+      sonidoDisfraz();
+    }
+  }
+
+  // colisión con enemigos: pierde una vida y rebota.
+  // Con un springlock puesto los animatrónicos creen que es uno de ellos
+  // y no le hacen daño.
+  if (invulnerable <= 0 && disfrazTimer <= 0) {
+    for (const e of enemigos) {
+      if (colisiona(polar, e)) {
+        vidas--;
+        sonidoGolpe();
+        invulnerable = 90; // ~1.5s de invulnerabilidad
+        // empujar a Polar a la posición inicial
+        polar.x = 60; polar.y = 380;
+        if (vidas <= 0) {
+          cambiarA("gameover");
+        }
+        break;
+      }
+    }
+  }
+
+  // entrar al PORTAL MATEMÁTICO (sólo niveles pares)
+  if (portal && !portal.usado && colisiona(polar, portal)) {
+    portal.usado = true;
+    preguntaActual = generarPregunta();
+    gameState = "matematicas";
+    return;
+  }
+
+  // tocar a Pingui con todos los pescados -> nivel completado
+  if (pescadosRecogidos >= totalPescadosNivel && colisiona(polar, pingui)) {
+    // bonus por vidas restantes
+    puntuacion += vidas * 50;
+    if (nivel >= NIVEL_MAX) {
+      cambiarA("victoria");
+      sonidoVictoria();
+    } else {
+      cambiarA("nivelCompleto");
+      sonidoNivelCompleto();
+    }
+  }
+}
+
+let polarPasoToggle = false;
+let polarPasoTimer = 0;
+
+// Portal mágico animado (capas concéntricas pulsantes + chispas orbitando)
+function dibujarPortal() {
+  if (!portal || portal.usado) return;
+  const { x, y, ancho: w, alto: h } = portal;
+  const cx = x + w / 2, cy = y + h / 2;
+  const t = Date.now() / 100;
+
+  // borde negro
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(x - 4, y - 4, w + 8, h + 8);
+
+  // capas concéntricas con respiración
+  const colores = [COLORES.morado, COLORES.moradoClaro, COLORES.cian, COLORES.azulClaro, COLORES.blanco];
+  for (let i = 0; i < colores.length; i++) {
+    const insetBase = i * 6 + 2;
+    const pulso = Math.sin(t / 4 + i) * 3;
+    const inset = insetBase + pulso;
+    const pw = w - inset * 2, ph = h - inset * 2;
+    if (pw <= 0 || ph <= 0) continue;
+    ctx.fillStyle = colores[i];
+    ctx.fillRect(x + inset, y + inset, pw, ph);
+  }
+
+  // chispas amarillas orbitando alrededor
+  for (let i = 0; i < 6; i++) {
+    const ang = (t / 14) + i * Math.PI / 3;
+    const dist = w / 2 + 8;
+    const sx = Math.floor(cx + Math.cos(ang) * dist);
+    const sy = Math.floor(cy + Math.sin(ang) * dist);
+    ctx.fillStyle = COLORES.amarillo;
+    ctx.fillRect(sx - 2, sy - 2, 4, 4);
+  }
+
+  // signo "?" parpadeante encima
+  if (Math.floor(Date.now() / 300) % 2 === 0) {
+    texto("?", cx, y - 30, COLORES.amarillo, 26, COLORES.rojo, "center");
+  }
+}
+
+// Pantalla del desafío matemático
+function dibujarMatematicas() {
+  // Dibuja el juego de fondo (estado pausado)
+  dibujarFondoMapa();
+  for (const ib of icebergs) dibujarIceberg(ib.x, ib.y, 4);
+  for (const p of pescados) if (!p.recogido) dibujarPescado(p.x, p.y, 4);
+  for (const e of enemigos) dibujarEnemigo(e.x, e.y, e.sprite, e.leyenda, 4);
+  dibujarPingui(pingui.x, pingui.y, 4);
+  dibujarPolar(polar.x, polar.y, 4);
+  dibujarPortal();
+
+  // Velo oscuro
+  ctx.fillStyle = "rgba(8,4,40,0.88)";
+  ctx.fillRect(0, 0, ANCHO, ALTO);
+
+  // Caja del cuestionario
+  const bx = 80, by = 50, bw = ANCHO - 160, bh = ALTO - 100;
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(bx - 8, by - 8, bw + 16, bh + 16);
+  ctx.fillStyle = COLORES.morado;
+  ctx.fillRect(bx, by, bw, bh);
+  ctx.fillStyle = COLORES.cian;
+  ctx.fillRect(bx, by, bw, 8);
+  ctx.fillRect(bx, by + bh - 8, bw, 8);
+  ctx.fillRect(bx, by, 8, bh);
+  ctx.fillRect(bx + bw - 8, by, 8, bh);
+
+  // Título
+  texto("¡PORTAL MATEMATICO!", ANCHO / 2, by + 30, COLORES.amarillo, 22, COLORES.rojo, "center");
+
+  // Pregunta grande
+  if (preguntaActual) {
+    texto(preguntaActual.enunciado, ANCHO / 2, by + 110, COLORES.blanco, 40, COLORES.negro, "center");
+
+    // 4 opciones en cuadrícula 2x2
+    for (let i = 0; i < 4; i++) {
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      const ox = bx + 60 + col * 280;
+      const oy = by + 200 + row * 70;
+      const colorFondo = [COLORES.cian, COLORES.amarillo, COLORES.rosa, COLORES.naranja][i];
+      dibujarBoton(ox, oy, 240, 54,
+        `${i + 1}) ${preguntaActual.opciones[i]}`,
+        colorFondo, COLORES.negro, false);
+    }
+  }
+
+  // Pista abajo
+  texto("PRESIONA 1, 2, 3 O 4   |   O HAZ CLIC EN UNA OPCION",
+    ANCHO / 2, by + bh - 28, COLORES.blanco, 11, COLORES.negro, "center");
+}
+
+function dibujarJuego() {
+  dibujarFondoMapa();
+
+  // arboles decorativos
+  dibujarArbol(40, 110, 4);
+  dibujarArbol(740, 130, 4);
+  dibujarArbol(360, 90, 4);
+
+  // icebergs
+  for (const ib of icebergs) dibujarIceberg(ib.x, ib.y, 4);
+
+  // pescados
+  for (const p of pescados) {
+    if (!p.recogido) {
+      const off = Math.floor(Math.sin((Date.now() + p.x * 7) / 200) * 2);
+      dibujarPescado(p.x, p.y + off, 4);
+    }
+  }
+
+  // springlocks tirados en el suelo (con flotación leve)
+  for (const s of springlocks) {
+    if (!s.recogido) {
+      const off = Math.floor(Math.sin((Date.now() + s.x * 5) / 250) * 2);
+      dibujarSpringlock(s.x, s.y + off, 4);
+      // brillo amarillo sutil debajo
+      ctx.fillStyle = "rgba(255,232,84,0.25)";
+      ctx.fillRect(s.x - 4, s.y + s.alto - 6, s.ancho + 8, 6);
+    }
+  }
+
+  // portal mágico (sólo niveles pares)
+  dibujarPortal();
+
+  // enemigos (animatrónicos: Freddy, Bonnie, Chica, Foxy)
+  for (const e of enemigos) dibujarEnemigo(e.x, e.y, e.sprite, e.leyenda, 4);
+
+  // pingui esperando
+  dibujarPingui(pingui.x, pingui.y, 4);
+
+  // Polar (parpadea si está invulnerable)
+  const moviendo = teclas["ArrowLeft"] || teclas["ArrowRight"] || teclas["ArrowUp"] || teclas["ArrowDown"];
+  if (moviendo) {
+    polarPasoTimer++;
+    if (polarPasoTimer > 8) { polarPasoToggle = !polarPasoToggle; polarPasoTimer = 0; }
+  }
+  const ocultoPorParpadeo = invulnerable > 0 && Math.floor(invulnerable / 6) % 2 === 0;
+  if (!ocultoPorParpadeo) {
+    dibujarPolar(polar.x, polar.y, 4, polarPasoToggle && moviendo, disfrazTimer > 0);
+  }
+
+  // barra de tiempo del disfraz encima de Polar
+  if (disfrazTimer > 0) {
+    const barW = 60, barH = 6;
+    const bx = polar.x + polar.ancho / 2 - barW / 2;
+    const by = polar.y - 14;
+    ctx.fillStyle = COLORES.negro;
+    ctx.fillRect(bx - 2, by - 2, barW + 4, barH + 4);
+    ctx.fillStyle = COLORES.grisOscuro;
+    ctx.fillRect(bx, by, barW, barH);
+    ctx.fillStyle = COLORES.amarillo;
+    ctx.fillRect(bx, by, Math.floor(barW * (disfrazTimer / DISFRAZ_DUR)), barH);
+    // texto pequeño "DISFRAZ"
+    if (Math.floor(Date.now() / 250) % 2 === 0) {
+      texto("DISFRAZ", polar.x + polar.ancho / 2, by - 18, COLORES.amarillo, 10, COLORES.negro, "center");
+    }
+  }
+
+  // HUD - barra superior negra
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(0, 0, ANCHO, 56);
+  ctx.fillStyle = COLORES.amarillo;
+  ctx.fillRect(0, 52, ANCHO, 4);
+  texto(`NIVEL ${nivel}/${NIVEL_MAX}`, 20, 18, COLORES.cian, 14, COLORES.azulOscuro);
+  // Vidas (corazones)
+  for (let i = 0; i < vidas; i++) {
+    dibujarCorazon(200 + i * 32, 14, 3);
+  }
+  texto(`PESCADOS ${pescadosRecogidos}/${totalPescadosNivel}`, 340, 18, COLORES.blanco, 14);
+  texto(`${puntuacion} PTS`, ANCHO - 20, 18, COLORES.amarillo, 14, COLORES.rojo, "right");
+
+  // Feedback flotante después de responder una pregunta
+  if (feedbackMate && feedbackMate.timer > 0) {
+    feedbackMate.timer--;
+    const fy = ALTO / 2 - 20;
+    ctx.fillStyle = "rgba(0,0,0,0.7)";
+    ctx.fillRect(ANCHO / 2 - 220, fy - 8, 440, 50);
+    texto(feedbackMate.texto, ANCHO / 2, fy + 6, feedbackMate.color, 20, COLORES.negro, "center");
+    if (feedbackMate.timer === 0) feedbackMate = null;
+  }
+
+  // Mensaje de ayuda si ya tiene todos los pescados
+  if (pescadosRecogidos >= totalPescadosNivel) {
+    if (Math.floor(Date.now() / 400) % 2 === 0) {
+      texto("¡VUELVE CON PINGUI!", ANCHO / 2, ALTO - 36, COLORES.rojo, 16, COLORES.blanco, "center");
+    }
+  }
+}
+
+// -------------------- VICTORIA --------------------
+
+function dibujarVictoria() {
+  dibujarFondoMapa();
+
+  dibujarArbol(40, 110, 4);
+  dibujarArbol(740, 130, 4);
+
+  // confeti
+  for (let i = 0; i < 50; i++) {
+    const cx = (i * 71 + Date.now() * 0.05) % ANCHO;
+    const cy = ((i * 53 + Date.now() * 0.07)) % ALTO;
+    const colores = [COLORES.rojo, COLORES.amarillo, COLORES.cian, COLORES.naranja, COLORES.verde];
+    ctx.fillStyle = colores[i % 5];
+    ctx.fillRect(Math.floor(cx), Math.floor(cy), 6, 6);
+  }
+
+  dibujarPolar(ANCHO / 2 - 80, 260, 5);
+  dibujarPingui(ANCHO / 2 + 40, 270, 5);
+
+  dibujarBocadillo(ANCHO / 2 - 240, 90, 480, 110,
+    ["¡GRACIAS AMIGO,", "QUE BANQUETE!"], ANCHO / 2 + 80);
+
+  // título VICTORIA - terminó los 10 niveles
+  texto("¡JUEGO COMPLETADO!", ANCHO / 2, 24, COLORES.amarillo, 26, COLORES.rojo, "center");
+  texto(`PUNTUACION FINAL: ${puntuacion}`, ANCHO / 2, ALTO - 130, COLORES.cian, 16, COLORES.negro, "center");
+
+  dibujarBoton(ANCHO / 2 - 140, ALTO - 80, 280, 56, "VOLVER A JUGAR", COLORES.verde, COLORES.blanco, true);
+}
+
+// -------------------- NIVEL COMPLETADO (entre niveles) --------------------
+
+function dibujarNivelCompleto() {
+  // Fondo oscuro semi-transparente sobre el mapa
+  dibujarFondoMapa();
+  ctx.fillStyle = "rgba(0,0,30,0.75)";
+  ctx.fillRect(0, 0, ANCHO, ALTO);
+
+  // Caja central
+  const cx = ANCHO / 2, cw = 540, ch = 320;
+  const cxL = cx - cw / 2, cyT = (ALTO - ch) / 2;
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(cxL - 6, cyT - 6, cw + 12, ch + 12);
+  ctx.fillStyle = COLORES.azulOscuro;
+  ctx.fillRect(cxL, cyT, cw, ch);
+  ctx.fillStyle = COLORES.cian;
+  ctx.fillRect(cxL, cyT, cw, 6);
+  ctx.fillRect(cxL, cyT + ch - 6, cw, 6);
+
+  // Título con efecto de aparición
+  texto("¡NIVEL COMPLETADO!", cx, cyT + 30, COLORES.amarillo, 22, COLORES.rojo, "center");
+  texto(`COMPLETASTE NIVEL ${nivel}`, cx, cyT + 80, COLORES.blanco, 14, COLORES.negro, "center");
+  texto(`PUNTOS: ${puntuacion}`, cx, cyT + 120, COLORES.amarillo, 16, COLORES.negro, "center");
+
+  // Polar y Pingui celebrando
+  const yOff = Math.floor(Math.sin(Date.now() / 150) * 4);
+  dibujarPolar(cx - 110, cyT + 150 + yOff, 3);
+  dibujarPingui(cx + 50, cyT + 155 + yOff, 3);
+
+  // Botón siguiente nivel
+  dibujarBoton(cx - 150, cyT + ch - 70, 300, 50,
+               `SIGUIENTE: NIVEL ${nivel + 1} >`, COLORES.verde, COLORES.blanco, true);
+}
+
+// -------------------- GAME OVER --------------------
+
+function dibujarGameOver() {
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(0, 0, ANCHO, ALTO);
+
+  // estrellas/copos sutiles
+  ctx.fillStyle = COLORES.azulOscuro;
+  for (let i = 0; i < 30; i++) {
+    const sx = (i * 53) % ANCHO;
+    const sy = (i * 91) % ALTO;
+    ctx.fillRect(sx, sy, 4, 4);
+  }
+
+  if (Math.floor(Date.now() / 350) % 2 === 0) {
+    texto("GAME OVER", ANCHO / 2, 130, COLORES.rojo, 48, COLORES.blanco, "center");
+  } else {
+    texto("GAME OVER", ANCHO / 2, 130, COLORES.blanco, 48, COLORES.rojo, "center");
+  }
+
+  texto(`LLEGASTE AL NIVEL ${nivel}`, ANCHO / 2, 230, COLORES.amarillo, 16, COLORES.negro, "center");
+  texto(`PUNTOS FINALES: ${puntuacion}`, ANCHO / 2, 270, COLORES.cian, 14, COLORES.negro, "center");
+
+  // pingüi triste
+  dibujarPingui(ANCHO / 2 - 32, 320, 4);
+
+  dibujarBoton(ANCHO / 2 - 150, ALTO - 80, 300, 56, "REINTENTAR", COLORES.naranja, COLORES.blanco, true);
+}
+
+// -------------------- CAMBIO DE ESTADO --------------------
+
+function cambiarA(nuevo) {
+  const anterior = gameState;
+  gameState = nuevo;
+  if (nuevo === "titulo") {
+    inicializarCopos(60);
+  } else if (nuevo === "jugando") {
+    // si venimos del título o de gameover/victoria -> partida nueva
+    // si venimos de "nivelCompleto" -> avanzar al siguiente nivel
+    if (anterior === "nivelCompleto") {
+      nivel++;
+      inicializarNivel();
+    } else {
+      inicializarPartida();
+    }
+  } else if (nuevo === "intro") {
+    introTiempo = 0;
+    introFase = 0;
+    introDialogoActual = 0;
+    introPolarX = 320;
+    introPolarY = 280;
+    introRefriAbierto = false;
+    introExclamacion = false;
+    introFadeOut = 0;
+  }
+}
+
+// -------------------- LOOP PRINCIPAL --------------------
+
+let ultimo = performance.now();
+function loop(ahora) {
+  const dt = ahora - ultimo;
+  ultimo = ahora;
+
+  ctx.fillStyle = COLORES.negro;
+  ctx.fillRect(0, 0, ANCHO, ALTO);
+
+  if (gameState === "espera") {
+    dibujarEspera();
+  } else if (gameState === "intro") {
+    actualizarIntro(dt);
+    dibujarIntro();
+  } else if (gameState === "titulo") {
+    dibujarTitulo();
+  } else if (gameState === "jugando") {
+    actualizarJuego();
+    dibujarJuego();
+  } else if (gameState === "matematicas") {
+    dibujarMatematicas();
+  } else if (gameState === "nivelCompleto") {
+    dibujarNivelCompleto();
+  } else if (gameState === "gameover") {
+    dibujarGameOver();
+  } else if (gameState === "victoria") {
+    dibujarVictoria();
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// -------------------- INPUT (teclado y mouse) --------------------
+
+document.addEventListener("keydown", (e) => {
+  if (e.key.startsWith("Arrow") || e.key === " ") e.preventDefault();
+  teclas[e.key] = true;
+
+  // Primer gesto: arranca audio + intro
+  if (gameState === "espera") {
+    iniciarAudio();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    arrancarMusicaIntro();
+    cambiarA("intro");
+    return;
+  }
+
+  // En "matematicas" las teclas 1-4 eligen respuesta
+  if (gameState === "matematicas") {
+    const idx = parseInt(e.key, 10) - 1;
+    if (idx >= 0 && idx < 4) responder(idx);
+    return;
+  }
+
+  // En "nivelCompleto" Enter/Espacio avanza al siguiente nivel
+  if (gameState === "nivelCompleto" && (e.key === "Enter" || e.key === " ")) {
+    cambiarA("jugando");
+  }
+  // En "gameover" o "victoria" Enter vuelve al título
+  if ((gameState === "gameover" || gameState === "victoria") &&
+      (e.key === "Enter" || e.key === " ")) {
+    cambiarA("titulo");
+  }
+});
+
+document.addEventListener("keyup", (e) => {
+  teclas[e.key] = false;
+});
+
+lienzo.addEventListener("click", (e) => {
+  const rect = lienzo.getBoundingClientRect();
+  const escalaX = lienzo.width / rect.width;
+  const escalaY = lienzo.height / rect.height;
+  const mx = (e.clientX - rect.left) * escalaX;
+  const my = (e.clientY - rect.top) * escalaY;
+
+  // Iniciar audio en cualquier clic
+  iniciarAudio();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+
+  if (gameState === "espera") {
+    arrancarMusicaIntro();
+    cambiarA("intro");
+    return;
+  }
+
+  if (gameState === "intro") {
+    // botón saltar
+    const bx = ANCHO - 150, by = ALTO - 56, bw = 130, bh = 40;
+    if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh) {
+      detenerMusicaIntro();
+      cambiarA("titulo");
+    }
+    return;
+  }
+
+  if (gameState === "titulo") {
+    const bx = ANCHO / 2 - 110, by = 250, bw = 220, bh = 70;
+    if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh) {
+      cambiarA("jugando");
+    }
+    return;
+  }
+
+  if (gameState === "matematicas") {
+    // Buscar cuál de las 4 opciones se hizo clic (coords iguales a las del dibujo)
+    const bx = 80, by = 50;
+    for (let i = 0; i < 4; i++) {
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      const ox = bx + 60 + col * 280;
+      const oy = by + 200 + row * 70;
+      const ow = 240, oh = 54;
+      if (mx >= ox && mx <= ox + ow && my >= oy && my <= oy + oh) {
+        responder(i);
+        return;
+      }
+    }
+    return;
+  }
+
+  if (gameState === "nivelCompleto") {
+    // botón siguiente nivel (coords iguales a las del dibujo)
+    const cx = ANCHO / 2;
+    const ch = 320;
+    const cyT = (ALTO - ch) / 2;
+    const bx = cx - 150, by = cyT + ch - 70, bw = 300, bh = 50;
+    if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh) {
+      cambiarA("jugando"); // avanza al siguiente nivel
+    }
+    return;
+  }
+
+  if (gameState === "gameover") {
+    const bx = ANCHO / 2 - 150, by = ALTO - 80, bw = 300, bh = 56;
+    if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh) {
+      cambiarA("titulo");
+    }
+    return;
+  }
+
+  if (gameState === "victoria") {
+    const bx = ANCHO / 2 - 140, by = ALTO - 80, bw = 280, bh = 56;
+    if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh) {
+      cambiarA("titulo");
+    }
+    return;
+  }
+});
+
+// Inicializa copos para que ya estén listos al cambiar de pantalla
+inicializarCopos(60);
+</script>
+
+</body>
+</html>
